@@ -15,7 +15,7 @@ The mobile monitor operates through three main components:
 
 ### 1. Reading (Snapshot Capture)
 The server connects to Antigravity via Chrome DevTools Protocol (CDP) and periodically captures **snapshots of the chat interface**:
-- Captures all CSS styles to preserve formatting
+- Captures all CSS styles to preserve formatting, sends CSS only once bc its huge
 - Captures the HTML of the chat interface
 - Buttons and everything that you wont be able to click
 - Polls every 3 seconds and only updates when content changes
@@ -31,7 +31,6 @@ Messages typed in the mobile interface are injected directly into Antigravity:
 A lightweight web server provides the mobile UI:
 - WebSocket connection for real-time updates
 - Auto-refresh when new content appears
-- Clean, responsive interface optimized for mobile devices
 - Send messages directly from your phone
 
 ## Setup
@@ -66,5 +65,7 @@ http://<your-local-ip>:3000
 This is over local network, so it will not work if you are on a different network, unless you use a VPN or something.
 
 The interface will automatically connect and display your Antigravity conversation in almost real-time.
+
+I have tried keeping it simple and not adding any extra features, but if you want to add more features, feel free to do so, because of how simple it is it should be pretty easy. You might just want to use the server.js and just use the API it exposes to interact with open chatwindows.
 
 Thanks to https://github.com/lukasz-wronski for finding bugs and https://github.com/Mario4272 for the original idea. 
