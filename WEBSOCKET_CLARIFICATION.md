@@ -2,7 +2,9 @@
 
 ## Issue
 
-PR #1 states: "Direct WebSocket snapshots: Snapshots are now broadcast directly via WebSocket on connect instead of requiring client polling"
+PR #1 states: 
+
+> "Direct WebSocket snapshots: Snapshots are now broadcast directly via WebSocket on connect instead of requiring client polling"
 
 This description is misleading because **WebSockets were already used from the start**.
 
@@ -70,10 +72,12 @@ The improvement is **NOT** "now using websockets instead of client polling" beca
 
 The **actual improvement** is:
 
-> **Direct WebSocket data transfer**: Snapshot data is now sent directly through WebSocket messages instead of sending notifications that require clients to make separate HTTP GET requests. This reduces round trips and improves real-time performance.
+> **Direct WebSocket data transfer**: Snapshot data is now sent directly through WebSocket messages instead of sending notifications that require clients to make separate HTTP GET requests. This reduces network communication from 2 round trips (WebSocket notification + HTTP GET request/response) to 1 round trip (WebSocket message with data), improving real-time performance and reducing latency.
 
 ## Conclusion
 
-The original implementation was **not** using "client polling" in the traditional sense (no `setInterval` making repeated requests). It was using WebSockets for **notifications** + HTTP for **data transfer**. 
+The original implementation was **not** using "client polling" in the traditional sense. Traditional client polling involves periodic HTTP requests on a timer (e.g., `setInterval(() => fetch('/snapshot'), 3000)`) to check for updates, which is inefficient and creates unnecessary server load.
 
-The new implementation uses WebSockets for **both notifications and data transfer**, which is more efficient and truly real-time.
+Instead, the original implementation used WebSockets for **notifications** + HTTP for **data transfer**, which was already event-driven and real-time.
+
+The new implementation uses WebSockets for **both notifications and data transfer**, which is more efficient by eliminating the extra HTTP request cycle.
