@@ -63,14 +63,14 @@ Open your browser in the bathroom and navigate to:
 http://<your-local-ip>:3000
 ```
 
-## Problems?
+### Problems?
 
 Problems setting up? Don't know how to do a step? Can't find an explanation? **Open Shit-Chat folder in antigravity and tell the agent what issues you are having**. It can read the code in one go.
 
+------------
+
 This is over local network, so it will not work if you are on a different network, unless you use a VPN or tailscale or something.
 
-The interface will automatically connect and display your Antigravity conversation in almost real-time.
+I have tried keeping it simple and not adding any extra features, but if you want to add more features, feel free to do so, because of how simple it is it should be pretty easy. You might just want to use the server.js and just use the API it exposes to interact with open chatwindows with your own client.
 
-I have tried keeping it simple and not adding any extra features, but if you want to add more features, feel free to do so, because of how simple it is it should be pretty easy. You might just want to use the server.js and just use the API it exposes to interact with open chatwindows.
-
-Thanks to https://github.com/lukasz-wronski for finding bugs and https://github.com/Mario4272 for the original idea. 
+### Thanks to https://github.com/lukasz-wronski for finding bugs and https://github.com/Mario4272 for the original idea. 
