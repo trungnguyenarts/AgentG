@@ -772,13 +772,11 @@ body {
 .chat-content {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: 'JetBrains Mono', monospace;
 }
 
-/* All text inherits theme color and font */
+/* All text inherits theme color */
 .chat-content * {
   color: inherit;
-  font-family: 'JetBrains Mono', monospace !important;
 }
 
 /* Code blocks styling */

@@ -3,292 +3,185 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Antigravity Shit-Chat</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a1a !important;
-            color: #fff !important;
-            height: 100vh;
-            /* Fallback */
-            height: 100dvh;
-            /* Dynamic constraint */
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-            margin: 0 !important;
-        }
-
-        /* Cascade Selector / Header */
-        .headers-container {
-            background: #2a2a2a !important;
-            border-bottom: 1px solid #3a3a3a !important;
-            position: relative;
-            z-index: 100;
-            display: flex;
-            overflow-x: auto;
-            white-space: nowrap;
-            -webkit-overflow-scrolling: touch;
-        }
-
-        .cascade-tab {
-            padding: 12px 16px;
-            cursor: pointer;
-            border-right: 1px solid #3a3a3a;
-            opacity: 0.6;
-            transition: all 0.2s;
-            font-size: 14px;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .cascade-tab.active {
-            opacity: 1;
-            background: #333;
-            border-bottom: 2px solid #3b82f6;
-        }
-
-        .cascade-tab .status {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #666;
-        }
-
-        .cascade-tab.active-window .status {
-            background: #4ade80;
-        }
-
-        /* Green if optimized/active window */
-
-        .chat-container {
-            flex: 1;
-            overflow-y: auto;
-            position: relative;
-        }
-
-        .chat-content {
-            padding: 16px;
-            min-height: 100%;
-        }
-
-        .input-section {
-            background: #2a2a2a !important;
-            padding: 12px;
-            /* Account for mobile safe areas */
-            padding-bottom: calc(12px + env(safe-area-inset-bottom));
-            border-top: 1px solid #3a3a3a !important;
-            position: relative;
-            z-index: 1000;
-            /* Increased z-index */
-            display: flex;
-            gap: 8px;
-        }
-
-        textarea {
-            flex: 1;
-            background: #1a1a1a;
-            border: 1px solid #3a3a3a;
-            color: white;
-            padding: 8px;
-            border-radius: 6px;
-            resize: none;
-            height: 40px;
-        }
-
-        button {
-            padding: 0 20px;
-            background: #3b82f6;
-            border: none;
-            color: white;
-            border-radius: 6px;
-            font-weight: 600;
-        }
-
-        .loading {
-            text-align: center;
-            color: #666;
-            margin-top: 50px;
-        }
-    </style>
-    <style id="cascade-style">
-        /* Dynamic styles will be injected here */
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0a0a0a">
+    <title>AgentG - Mobile Monitor</title>
+    <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">AgentG</div>
+                <div class="connection-status">
+                    <span class="status-dot" id="statusDot"></span>
+                    <span id="statusText">Connecting...</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+                    <span id="themeIcon">🌙</span>
+                </button>
+            </div>
+        </header>
 
-    <div class="headers-container" id="tabsContainer">
-        <!-- Tabs injected here -->
-        <div class="cascade-tab">Loading...</div>
-    </div>
+        <!-- Chat Display (Snapshot) -->
+        <div class="chat-container" id="chatContainer">
+            <div class="chat-content" id="chatContent">
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <p>Loading chat...</p>
+                </div>
+            </div>
+        </div>
 
-    <div class="chat-container" id="chatContainer">
-        <div class="chat-content" id="chatContent">
-            <div class="loading">Waiting for connection...</div>
+        <!-- Pending Action Bar (hidden by default) -->
+        <div class="action-bar hidden" id="actionBar">
+            <div class="action-info">
+                <span class="action-icon">⚡</span>
+                <span class="action-text" id="actionText">Run command?</span>
+            </div>
+            <div class="action-buttons">
+                <button class="action-btn reject-btn" id="rejectBtn" aria-label="Reject">
+                    ✕ Reject
+                </button>
+                <button class="action-btn accept-btn" id="acceptBtn" aria-label="Accept">
+                    ✓ Accept
+                </button>
+            </div>
+        </div>
+
+        <!-- Input Section -->
+        <div class="input-section">
+            <div class="file-preview-area hidden" id="filePreviewArea"></div>
+            <div class="input-row">
+                <button class="toolbar-btn" id="attachBtn" aria-label="Attach file" title="Add files">📎</button>
+                <button class="toolbar-btn" id="voiceBtn" aria-label="Voice recording"
+                    title="Hold to record">🎙️</button>
+                <textarea class="message-input" id="messageInput" placeholder="Type a message..." rows="1"
+                    aria-label="Message input"></textarea>
+                <button class="send-btn" id="sendBtn" aria-label="Send message">Send</button>
+            </div>
+        </div>
+
+        <!-- Scroll to Bottom FAB -->
+        <button class="scroll-fab" id="scrollFab" aria-label="Scroll to bottom">↓</button>
+    </div> <!-- End of .app container -->
+
+    <!-- Voice Recording Overlay -->
+    <div class="voice-recording-overlay" id="voiceOverlay">
+        <div class="voice-recording-card">
+            <div class="voice-waveform">🎙️</div>
+            <div class="voice-timer" id="voiceTimer">0:00</div>
+            <p style="color: var(--text-secondary); font-size: 14px;">Recording audio...</p>
+            <div class="voice-actions">
+                <button class="voice-btn voice-btn-cancel" id="voiceCancelBtn">Cancel</button>
+                <button class="voice-btn voice-btn-stop hidden" id="voiceStopBtn"
+                    style="background: var(--error); color: white;">Stop</button>
+                <button class="voice-btn voice-btn-send hidden" id="voiceSendBtn">Send</button>
+            </div>
         </div>
     </div>
 
-    <div class="input-section">
-        <textarea id="messageInput" placeholder="Type a message..."></textarea>
-        <button id="sendBtn">Send</button>
+
+
+    <!-- Step Confirmation Popup -->
+    <div class="modal-overlay" id="confirmationPopup">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">⚠️ Confirmation Required</h2>
+            </div>
+            <div class="modal-body">
+                <p id="confirmMessage" style="font-size: 14px; line-height: 1.5; margin-bottom: 16px;">
+                    Confirmation required to execute this step
+                </p>
+            </div>
+            <div class="modal-footer" style="padding: 16px; display: flex; gap: 12px; justify-content: flex-end;">
+                <button class="action-btn reject-btn" id="denyBtn" style="width: auto; padding: 8px 24px;">
+                    Deny
+                </button>
+                <button class="action-btn accept-btn" id="confirmBtn" style="width: auto; padding: 8px 24px;">
+                    Confirm
+                </button>
+            </div>
+        </div>
     </div>
 
-    <script>
-        const tabsContainer = document.getElementById('tabsContainer');
-        const chatContent = document.getElementById('chatContent');
-        const chatContainer = document.getElementById('chatContainer');
-
-        let cascades = [];
-        let currentCascadeId = null;
-        let ws = null;
-
-        function connect() {
-            ws = new WebSocket(`ws://${location.host}`);
-
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-
-                if (data.type === 'cascade_list') {
-                    cascades = data.cascades;
-                    renderTabs();
-
-                    // Auto-select first if none selected
-                    if (!currentCascadeId && cascades.length > 0) {
-                        selectCascade(cascades[0].id);
-                    }
-                }
-
-                if (data.type === 'snapshot_update') {
-                    if (data.cascadeId === currentCascadeId) {
-                        updateContentOnly(currentCascadeId);
-                    }
-                }
-            };
-
-            ws.onclose = () => setTimeout(connect, 2000);
-        }
-
-        function renderTabs() {
-            tabsContainer.innerHTML = cascades.map(c => `
-                <div class="cascade-tab ${c.id === currentCascadeId ? 'active' : ''} ${c.active ? 'active-window' : ''}" 
-                     onclick="selectCascade('${c.id}')">
-                    <div class="status"></div>
-                    ${c.title || 'Untitled'}
+    <!-- Browser Permission Warning -->
+    <div class="modal-overlay warning-popup" id="permissionWarning">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">⚠️ Permission Required</h2>
+            </div>
+            <div class="modal-body">
+                <p id="permissionMessage" style="font-size: 14px; line-height: 1.5; margin-bottom: 16px;">
+                    Antigravity needs browser permission on desktop. Please grant permission on your PC.
+                </p>
+                <div
+                    style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; font-size: 13px; color: var(--text-secondary);">
+                    💡 This is a browser security dialog that cannot be clicked remotely. You must grant permission once
+                    on your desktop, then it will be remembered.
                 </div>
-            `).join('');
+            </div>
+            <div class="modal-footer" style="padding: 16px; display: flex; justify-content: flex-end;">
+                <button class="action-btn accept-btn" id="dismissBtn" style="width: auto; padding: 8px 24px;">
+                    Dismiss
+                </button>
+            </div>
+        </div>
+    </div>
 
-            if (cascades.length === 0) {
-                tabsContainer.innerHTML = '<div class="cascade-tab">No chats found</div>';
-            }
-        }
+    <!-- Mic Setup Modal -->
+    <div class="modal-overlay" id="micSetupModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">🎙️ Microphone Setup</h2>
+                <button class="modal-close" id="micModalClose" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 16px; font-size: 14px; line-height: 1.5;">
+                    Microphone access requires HTTPS. To use it on this local IP, please authorize it in Chrome:
+                </p>
 
-        function selectCascade(id) {
-            currentCascadeId = id;
-            renderTabs();
-            loadCascade(id);
-        }
+                <div style="background: var(--bg-tertiary); padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+                    <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">1. Copy this URL:
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="micFlagUrl"
+                            value="chrome://flags/#unsafely-treat-insecure-origin-as-secure" readonly
+                            style="flex: 1; background: transparent; border: none; color: var(--accent-primary); font-family: monospace; font-size: 13px; outline: none;">
+                        <button id="copyFlagBtn"
+                            style="background: var(--accent-primary); color: white; border: none; padding: 4px 8px; border-radius: 4px; font-size: 12px; cursor: pointer;">Copy</button>
+                    </div>
+                </div>
 
-        async function loadCascade(id) {
-            try {
-                // 1. Fetch Styles (Once)
-                const styleRes = await fetch(`/styles/${id}`);
-                if (styleRes.ok) {
-                    const styleData = await styleRes.json();
-                    document.getElementById('cascade-style').textContent = `
-                        ${styleData.css}
-                        #cascade { 
-                            background: transparent !important; 
-                            color: white !important; 
-                        }
-                        #cascade .prose {
-                            --tw-prose-body: #e5e7eb !important;
-                            --tw-prose-headings: #f3f4f6 !important;
-                            --tw-prose-lead: #e5e7eb !important;
-                            --tw-prose-links: #60a5fa !important;
-                            --tw-prose-bold: #f3f4f6 !important;
-                            --tw-prose-counters: #9ca3af !important;
-                            --tw-prose-bullets: #d1d5db !important;
-                            --tw-prose-hr: #374151 !important;
-                            --tw-prose-quotes: #f3f4f6 !important;
-                            --tw-prose-quote-borders: #374151 !important;
-                            --tw-prose-captions: #9ca3af !important;
-                            --tw-prose-code: #f3f4f6 !important;
-                            --tw-prose-pre-code: #e5e7eb !important;
-                            --tw-prose-pre-bg: #1f2937 !important;
-                            --tw-prose-th-borders: #374151 !important;
-                            --tw-prose-td-borders: #374151 !important;
-                            color: #e5e7eb !important; /* Force color explicitly too */
-                        }
-                        /* Ensure code blocks are readable */
-                        pre, code { background: #111 !important; color: #ddd !important; }
-                    `;
-                }
+                <div style="font-size: 14px; line-height: 1.6;">
+                    2. Open it in a new tab.<br>
+                    3. Set to <b>Enabled</b>.<br>
+                    4. Add <code id="micServerUrl" style="color: var(--accent-primary);"></code> to the list.<br>
+                    5. <b>Relaunch</b> Chrome.
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 16px; display: flex; justify-content: flex-end;">
+                <button class="action-btn accept-btn" id="micModalOk"
+                    style="width: auto; padding: 8px 24px;">Understood</button>
+            </div>
+        </div>
+    </div>
 
-                // 2. Fetch Content
-                await updateContentOnly(id);
-            } catch (e) { console.error(e); }
-        }
+    <!-- Hidden file input -->
+    <input type="file" id="fileInput" multiple accept="*/*" class="hidden">
 
-        async function updateContentOnly(id) {
-            try {
-                const res = await fetch(`/snapshot/${id}`);
-                if (!res.ok) throw new Error('Failed');
-                const data = await res.json();
-
-                // Preserve Scroll
-                const isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 50;
-
-                document.body.style.backgroundColor = data.bodyBg || '#1a1a1a';
-                chatContent.innerHTML = data.html;
-                // No inner style block needed anymore
-
-                if (isAtBottom) chatContainer.scrollTop = chatContainer.scrollHeight;
-            } catch (e) { }
-        }
-
-        async function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const text = input.value;
-            if (!text || !currentCascadeId) return;
-
-            // Clear immediately to feel responsive
-            input.value = '';
-
-            try {
-                await fetch(`/send/${currentCascadeId}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
-                });
-                updateContentOnly(currentCascadeId); // Immediate refresh try
-            } catch (e) {
-                console.error("Send failed", e);
-                input.value = text; // Restore on fail
-                alert("Failed to send message: " + e.message);
-            }
-        }
-
-        document.getElementById('sendBtn').onclick = sendMessage;
-
-        document.getElementById('messageInput').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        connect();
-    </script>
+    <!-- Scripts -->
+    <script src="js/theme.js"></script>
+    <script src="js/websocket.js"></script>
+    <script src="js/snapshot.js"></script>
+    <script src="js/fileUpload.js"></script>
+    <script src="js/voiceRecorder.js"></script>
+    <script src="js/actionManager.js"></script>
+    <script src="js/main.js"></script>
 </body>
 
 </html>
