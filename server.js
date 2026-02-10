@@ -186,13 +186,35 @@ function getCDPStatus() {
 // Capture chat snapshot
 async function captureSnapshot(cdp) {
     const CAPTURE_SCRIPT = `(() => {
-        const cascade = document.getElementById('cascade');
-        if (!cascade) return { error: 'cascade not found' };
-        
-        const cascadeStyles = window.getComputedStyle(cascade);
-        const clone = cascade.cloneNode(true);
-        const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
-        if (inputContainer) inputContainer.remove();
+        // Try multiple selectors: new Antigravity (no #cascade) then legacy
+        let chatContainer = document.querySelector('div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto');
+        if (!chatContainer) chatContainer = document.getElementById('cascade');
+        if (!chatContainer) return { error: 'cascade not found' };
+
+        const containerStyles = window.getComputedStyle(chatContainer);
+        const clone = chatContainer.cloneNode(true);
+
+        // Remove input/editor area from clone
+        const inputEditor = clone.querySelector('[contenteditable="true"]');
+        if (inputEditor) {
+            const inputContainer = inputEditor.closest('div');
+            if (inputContainer && inputContainer !== clone) inputContainer.remove();
+        }
+
+        // Remove sessions list (placeholder divs with rounded-lg bg-gray-500)
+        // Strategy 1: selector with gap-y-3, px-4, transition (sessions div)
+        const sessionsDivs = clone.querySelectorAll('[class*="gap-y-3"][class*="px-4"][class*="transition"]');
+        sessionsDivs.forEach(d => d.remove());
+        // Strategy 2: fallback - gap-y-3 + px-4
+        if (sessionsDivs.length === 0) {
+            clone.querySelectorAll('[class*="gap-y-3"][class*="px-4"]').forEach(d => d.remove());
+        }
+        // Strategy 3: remove placeholder session items
+        clone.querySelectorAll('.rounded-lg.bg-gray-500').forEach(d => {
+            const parent = d.closest('[class*="gap-y-3"]');
+            if (parent) parent.remove();
+            else d.remove();
+        });
 
         // Remove style tags
         const styleTags = clone.querySelectorAll('style');
@@ -211,7 +233,7 @@ async function captureSnapshot(cdp) {
             for (const child of element.children) stripColorStyles(child);
         }
         stripColorStyles(clone);
-        
+
         const html = clone.outerHTML;
         let allCSS = '';
         for (const sheet of document.styleSheets) {
@@ -219,13 +241,13 @@ async function captureSnapshot(cdp) {
                 for (const rule of sheet.cssRules) allCSS += rule.cssText + '\\n';
             } catch (e) { }
         }
-        
+
         return {
             html: html,
             css: allCSS,
-            backgroundColor: cascadeStyles.backgroundColor,
-            color: cascadeStyles.color,
-            fontFamily: cascadeStyles.fontFamily
+            backgroundColor: containerStyles.backgroundColor,
+            color: containerStyles.color,
+            fontFamily: containerStyles.fontFamily
         };
     })()`;
 
@@ -309,7 +331,8 @@ async function injectMessage(cdp, text) {
         try {
             const check = await cdp.call("Runtime.evaluate", {
                 expression: `(() => {
-                    const cascade = document.getElementById('cascade');
+                    let cascade = document.querySelector('div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto');
+                    if (!cascade) cascade = document.getElementById('cascade');
                     const editor = document.querySelector('[contenteditable="true"]');
                     const hasValidEditor = editor && editor.offsetParent !== null;
                     const hasCascade = cascade && cascade.offsetParent !== null;
