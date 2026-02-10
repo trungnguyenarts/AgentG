@@ -1,0 +1,971 @@
+/* ============================================
+   Antigravity Mobile Monitor - Design System
+   Modern Minimal Theme with Dark/Light Support
+   ============================================ */
+
+/* CSS Variables - Theme Tokens */
+:root {
+  /* Dark Theme (Default) */
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #2a2a2a;
+  --bg-elevated: #1f1f1f;
+
+  --text-primary: #ffffff;
+  --text-secondary: #a3a3a3;
+  --text-tertiary: #737373;
+
+  --accent-primary: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: rgba(59, 130, 246, 0.1);
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+
+  --border-default: #2a2a2a;
+  --border-focus: #3b82f6;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+  --transition-slow: 0.3s ease;
+}
+
+/* Light Theme */
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f5;
+  --bg-tertiary: #e5e5e5;
+  --bg-elevated: #ffffff;
+
+  --text-primary: #0a0a0a;
+  --text-secondary: #525252;
+  --text-tertiary: #737373;
+
+  --accent-primary: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-light: rgba(37, 99, 235, 0.1);
+
+  --border-default: #e5e5e5;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+}
+
+/* ============================================
+   Reset & Base Styles
+   ============================================ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+  -webkit-tap-highlight-color: transparent;
+  /* Prevent white gap on mobile */
+  background: var(--bg-primary);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  height: 100vh;
+  overflow: hidden;
+  transition: background var(--transition-normal), color var(--transition-normal);
+}
+
+/* ============================================
+   Layout Structure
+   ============================================ */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+/* ============================================
+   Header
+   ============================================ */
+
+.header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-default);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo {
+  font-size: 18px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent-primary), #8b5cf6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--text-tertiary);
+  transition: background var(--transition-normal);
+}
+
+.status-dot.connected {
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Theme Toggle Button */
+.theme-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 18px;
+}
+
+.theme-toggle:active {
+  transform: scale(0.95);
+}
+
+/* ============================================
+   Chat Container (Snapshot Display)
+   ============================================ */
+
+.chat-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg-primary);
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+  /* No padding needed - input is fixed */
+}
+
+.chat-content {
+  min-height: 100%;
+  padding: 16px;
+  /* Padding at bottom for fixed input (approx input height) */
+  padding-bottom: 60px;
+  background: var(--bg-primary);
+}
+
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-secondary);
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border-default);
+  border-top-color: var(--accent-primary);
+  border-radius: var(--radius-full);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Scroll to Bottom FAB - 70% size, 50% opacity */
+.scroll-fab {
+  position: fixed;
+  bottom: 100px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-full);
+  background: var(--accent-primary);
+  border: none;
+  color: white;
+  box-shadow: var(--shadow-md);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  z-index: 90;
+  opacity: 0.5;
+  transition: all var(--transition-fast);
+}
+
+.scroll-fab.show {
+  display: flex;
+}
+
+.scroll-fab:active {
+  transform: scale(0.9);
+}
+
+/* ============================================
+   Input Section
+   ============================================ */
+
+.input-section {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-default);
+  padding: 8px 12px;
+  /* Fixed at bottom with high z-index and !important to override JS and global styles */
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0;
+  right: 0;
+  width: 100%;
+  min-height: 60px;
+  /* Force height */
+  box-sizing: border-box;
+  z-index: 2000 !important;
+  /* Extremely high */
+  display: flex !important;
+  flex-direction: column;
+  box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.1);
+  /* Visual confirm */
+}
+
+/* Single row with all elements */
+.input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.input-row .toolbar-btn {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.input-row .message-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  min-height: 36px;
+  padding: 8px 12px;
+}
+
+.input-row .send-btn {
+  height: 36px;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+/* Mode/Model selector row */
+.selector-row {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Message input area - ensure it's always visible */
+.input-wrapper {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  min-height: 50px;
+  /* Ensure this section is never cut off */
+  flex-shrink: 0;
+}
+
+/* Toolbar with controls */
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.toolbar-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 18px;
+}
+
+.toolbar-btn:active {
+  transform: scale(0.95);
+  background: var(--accent-light);
+}
+
+.toolbar-btn.recording {
+  background: var(--error);
+  color: white;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.toolbar-btn.recording.paused {
+  background: var(--warning);
+  animation-play-state: paused;
+}
+
+/* Dropdown selectors */
+.selector-group {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.selector {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.selector:active {
+  background: var(--accent-light);
+}
+
+.message-input {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 15px;
+  font-family: inherit;
+  resize: none;
+  min-height: 44px;
+  max-height: 120px;
+  line-height: 1.4;
+  transition: border-color var(--transition-fast);
+}
+
+.message-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.message-input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.send-btn {
+  min-width: 44px;
+  height: 44px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-primary);
+  border: none;
+  color: white;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+}
+
+.send-btn:hover {
+  background: var(--accent-hover);
+}
+
+.send-btn:active {
+  transform: scale(0.95);
+}
+
+.send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================
+   File Preview Chips
+   ============================================ */
+
+.file-preview-area {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.file-preview-area::-webkit-scrollbar {
+  display: none;
+}
+
+.file-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.file-chip img {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+}
+
+.file-chip-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.file-chip-remove {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--error);
+  border: none;
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition-fast);
+}
+
+.file-chip-remove:active {
+  transform: scale(0.9);
+}
+
+/* ============================================
+   Voice Recording UI
+   ============================================ */
+
+.voice-recording-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.voice-recording-overlay.show {
+  display: flex;
+}
+
+.voice-recording-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  box-shadow: var(--shadow-lg);
+}
+
+.voice-waveform {
+  width: 100px;
+  height: 100px;
+  border-radius: var(--radius-full);
+  background: var(--error);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 48px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.voice-waveform.paused {
+  background: var(--warning);
+  animation-play-state: paused;
+}
+
+.voice-timer {
+  font-size: 32px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.voice-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.voice-btn {
+  padding: 12px 24px;
+  border-radius: var(--radius-md);
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.voice-btn-cancel {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.voice-btn-send {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.voice-btn:active {
+  transform: scale(0.95);
+}
+
+/* ============================================
+   Modal Overlays
+   ============================================ */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 3000;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+}
+
+.modal-overlay.show {
+  display: flex;
+}
+
+.modal-content {
+  background: var(--bg-secondary);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  width: 100%;
+  max-width: 500px;
+  max-height: 70vh;
+  overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+  animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.modal-header {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--transition-fast);
+}
+
+.modal-close:active {
+  background: var(--bg-tertiary);
+}
+
+.modal-body {
+  padding: 16px;
+}
+
+.option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.option-item {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.option-item:active {
+  background: var(--accent-light);
+}
+
+.option-item.selected {
+  background: var(--accent-light);
+  color: var(--accent-primary);
+  font-weight: 600;
+}
+
+.option-check {
+  font-size: 18px;
+}
+
+/* ============================================
+   Responsive Adjustments
+   ============================================ */
+
+@media (max-width: 640px) {
+  .logo {
+    font-size: 16px;
+  }
+
+  .connection-status {
+    display: none;
+  }
+
+  .selector {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+
+.hidden {
+  display: none !important;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* ============================================
+   Chat Content - Theme Adaptive
+   Inline styles stripped from snapshot at server
+   ============================================ */
+
+/* Base chat styling - follows theme */
+.chat-container {
+  background: var(--bg-primary);
+}
+
+.chat-content {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* All text inherits theme color and font */
+.chat-content * {
+  color: inherit;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
+/* Code blocks styling */
+.chat-content pre,
+.chat-content code {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+}
+
+/* Terminal/command blocks */
+.chat-content [class*="terminal"],
+.chat-content [class*="command"],
+.chat-content [class*="code-block"] {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+/* Buttons in chat */
+.chat-content button {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+/* Links */
+.chat-content a {
+  color: var(--accent-primary);
+}
+
+/* ============================================
+   Action Bar (Accept/Reject)
+   ============================================ */
+
+.action-bar {
+  position: fixed;
+  bottom: 160px;
+  left: 16px;
+  right: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 95;
+  animation: slideInUp 0.2s ease-out;
+}
+
+@keyframes slideInUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.action-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.action-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.action-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-btn:active {
+  transform: scale(0.95);
+}
+
+.accept-btn {
+  background: var(--success);
+  color: white;
+}
+
+.accept-btn:hover {
+  background: #16a34a;
+}
+
+.reject-btn {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+}
+
+.reject-btn:hover {
+  background: var(--error);
+  color: white;
+  border-color: var(--error);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ============================================
+   Mobile Input - 2-Row Layout for Small Screens
+   ============================================ */
+
+@media (max-width: 480px) {
+  .input-section {
+    padding: 8px 8px 12px;
+  }
+
+  .input-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* First row: attach + mic + input + send */
+  .input-row .toolbar-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+
+  .input-row .message-input {
+    flex: 1 1 auto;
+    min-width: 100px;
+    order: 0;
+  }
+
+  .input-row .send-btn {
+    height: 32px;
+    padding: 0 10px;
+    font-size: 13px;
+  }
+
+  /* Second row: mode + model selectors */
+  .input-row .selector {
+    font-size: 11px;
+    padding: 6px 8px;
+  }
+
+  /* Make selectors wrap to second line */
+  .input-row::after {
+    content: '';
+    width: 100%;
+    order: 1;
+  }
+
+  .input-row .selector:nth-of-type(1) {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .input-row .selector:nth-of-type(2) {
+    order: 3;
+  }
+}

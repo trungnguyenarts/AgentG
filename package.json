@@ -1,8 +1,8 @@
 {
-    "name": "ag-mobile-monitor",
+    "name": "agentg",
     "version": "1.0.0",
     "type": "module",
-    "description": "Mobile web interface for monitoring Antigravity chat via visual snapshots",
+    "description": "AgentG - Mobile web interface for monitoring Antigravity chat",
     "scripts": {
         "start": "node server.js",
         "dev": "node server.js"

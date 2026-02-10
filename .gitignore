@@ -23,3 +23,18 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Debug/temp files
+snapshot.json
+debug.json
+cdp_list*.json
+status.json
+3000)
+*.vsix
+*.lnk
+
+# Claude worktrees
+.claude/
+
+# Uploads
+uploads/
