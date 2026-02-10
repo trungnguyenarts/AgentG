@@ -186,10 +186,14 @@ function getCDPStatus() {
 // Capture chat snapshot
 async function captureSnapshot(cdp) {
     const CAPTURE_SCRIPT = `(() => {
-        // Try multiple selectors: new Antigravity (no #cascade) then legacy
-        let chatContainer = document.querySelector('div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto');
+        // Try multiple selectors to find chat content
+        // 1. Chat messages container (text-ide-message-block-bot-color)
+        let chatContainer = document.querySelector('div[class*="text-ide-message-block-bot-color"]');
+        // 2. Scrollable chat area (new Antigravity)
+        if (!chatContainer) chatContainer = document.querySelector('div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto');
+        // 3. Legacy cascade
         if (!chatContainer) chatContainer = document.getElementById('cascade');
-        if (!chatContainer) return { error: 'cascade not found' };
+        if (!chatContainer) return { error: 'cascade not found', debug: document.body?.innerHTML?.substring(0, 200) };
 
         const containerStyles = window.getComputedStyle(chatContainer);
         const clone = chatContainer.cloneNode(true);
@@ -201,26 +205,11 @@ async function captureSnapshot(cdp) {
             if (inputContainer && inputContainer !== clone) inputContainer.remove();
         }
 
-        // Remove sessions list (placeholder divs with rounded-lg bg-gray-500)
-        // Strategy 1: selector with gap-y-3, px-4, transition (sessions div)
-        const sessionsDivs = clone.querySelectorAll('[class*="gap-y-3"][class*="px-4"][class*="transition"]');
-        sessionsDivs.forEach(d => d.remove());
-        // Strategy 2: fallback - gap-y-3 + px-4
-        if (sessionsDivs.length === 0) {
-            clone.querySelectorAll('[class*="gap-y-3"][class*="px-4"]').forEach(d => d.remove());
-        }
-        // Strategy 3: remove placeholder session items
-        clone.querySelectorAll('.rounded-lg.bg-gray-500').forEach(d => {
-            const parent = d.closest('[class*="gap-y-3"]');
-            if (parent) parent.remove();
-            else d.remove();
-        });
-
         // Remove style tags
         const styleTags = clone.querySelectorAll('style');
         styleTags.forEach(tag => tag.remove());
 
-        // Strip inline styles
+        // Strip inline color styles
         function stripColorStyles(element) {
             if (element.style) {
                 element.style.color = '';
@@ -252,14 +241,41 @@ async function captureSnapshot(cdp) {
     })()`;
 
     const contexts = cdp.getContexts();
-    for (const ctx of contexts) {
+
+    // Sort contexts: prioritize cascade-panel contexts (where chat lives)
+    const sorted = [...contexts].sort((a, b) => {
+        const aIsCascade = (a.origin || '').includes('cascade') || (a.name || '').includes('cascade') ? -1 : 0;
+        const bIsCascade = (b.origin || '').includes('cascade') || (b.name || '').includes('cascade') ? -1 : 0;
+        return aIsCascade - bIsCascade;
+    });
+
+    for (const ctx of sorted) {
         try {
             const result = await cdp.call("Runtime.evaluate", {
                 expression: CAPTURE_SCRIPT,
                 returnByValue: true,
                 contextId: ctx.id
             });
-            if (result.result && result.result.value) return result.result.value;
+            if (result.result && result.result.value) {
+                const val = result.result.value;
+                // Skip if error or HTML is too short (empty container)
+                if (val.error) continue;
+                if (val.html && val.html.length > 200) return val;
+            }
+        } catch (e) { }
+    }
+
+    // Fallback: return whatever we can get (even short HTML)
+    for (const ctx of sorted) {
+        try {
+            const result = await cdp.call("Runtime.evaluate", {
+                expression: CAPTURE_SCRIPT,
+                returnByValue: true,
+                contextId: ctx.id
+            });
+            if (result.result && result.result.value && !result.result.value.error) {
+                return result.result.value;
+            }
         } catch (e) { }
     }
     return null;
