@@ -50,8 +50,8 @@ http://<your-local-ip>:3000
 ```
 
 Examples:
-- Local Network: `http://192.168.1.3:3000`
-- Tailscale VPN: `http://100.86.148.61:3000`
+- Local Network: `http://192.168.x.x:3000`
+- Tailscale VPN: `http://100.x.x.x:3000`
 
 ## Architecture
 
