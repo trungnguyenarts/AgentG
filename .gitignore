@@ -38,3 +38,7 @@ status.json
 
 # Uploads
 uploads/
+
+# Batch/shell scripts
+*.bat
+*.sh
