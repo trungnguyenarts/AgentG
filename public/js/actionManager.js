@@ -20,6 +20,13 @@ class ActionManager {
         this.permissionMessage = document.getElementById('permissionMessage');
         this.dismissBtn = document.getElementById('dismissBtn');
 
+        // Tool Permission (Allow directory access, etc.)
+        this.toolPermissionPopup = document.getElementById('toolPermissionPopup');
+        this.toolPermissionMessage = document.getElementById('toolPermissionMessage');
+        this.toolDenyBtn = document.getElementById('toolDenyBtn');
+        this.toolAllowOnceBtn = document.getElementById('toolAllowOnceBtn');
+        this.toolAllowConvBtn = document.getElementById('toolAllowConvBtn');
+
         this.pollInterval = 2000; // Check every 2 seconds
         this.isPolling = false;
 
@@ -56,6 +63,23 @@ class ActionManager {
             });
         }
 
+        // Tool Permission buttons
+        if (this.toolDenyBtn) {
+            this.toolDenyBtn.addEventListener('click', () => {
+                this.handleToolPermission('deny');
+            });
+        }
+        if (this.toolAllowOnceBtn) {
+            this.toolAllowOnceBtn.addEventListener('click', () => {
+                this.handleToolPermission('allow_once');
+            });
+        }
+        if (this.toolAllowConvBtn) {
+            this.toolAllowConvBtn.addEventListener('click', () => {
+                this.handleToolPermission('allow_conversation');
+            });
+        }
+
         // Start polling for all popup types
         this.startPolling();
     }
@@ -85,30 +109,30 @@ class ActionManager {
 
             const data = await response.json();
 
-            // Priority: Command Approval > Step Confirmation > Browser Permission
-            if (data.commandApproval?.hasPendingAction) {
-                this.showActionBar(data.commandApproval);
+            // Priority: Command Approval > Tool Permission > Step Confirmation > Browser Permission
+            const hideAll = () => {
+                this.hideActionBar();
                 this.hideStepConfirmation();
                 this.hidePermissionWarning();
+                this.hideToolPermission();
+            };
+
+            if (data.commandApproval?.hasPendingAction) {
+                hideAll();
+                this.showActionBar(data.commandApproval);
+            } else if (data.toolPermission?.hasToolPermission) {
+                hideAll();
+                this.showToolPermission(data.toolPermission);
             } else if (data.stepConfirmation?.hasConfirmation) {
-                this.hideActionBar();
+                hideAll();
                 this.showStepConfirmation(data.stepConfirmation);
-                this.hidePermissionWarning();
             } else if (data.browserPermission?.hasPermissionDialog) {
-                // Check if permission warning is snoozed
-                if (this.permissionSnoozedUntil && Date.now() < this.permissionSnoozedUntil) {
-                    // Still snoozed, don't show
-                    this.hideActionBar();
-                    this.hideStepConfirmation();
-                } else {
-                    this.hideActionBar();
-                    this.hideStepConfirmation();
+                hideAll();
+                if (!(this.permissionSnoozedUntil && Date.now() < this.permissionSnoozedUntil)) {
                     this.showBrowserPermission(data.browserPermission);
                 }
             } else {
-                this.hideActionBar();
-                this.hideStepConfirmation();
-                this.hidePermissionWarning();
+                hideAll();
             }
         } catch (error) {
             console.error('Error polling for popups:', error);
@@ -233,6 +257,70 @@ class ActionManager {
         } finally {
             btn.disabled = false;
             btn.textContent = originalText;
+        }
+    }
+
+    // Tool Permission handlers (Allow directory access, etc.)
+    showToolPermission(data) {
+        if (!this.toolPermissionPopup) return;
+
+        if (this.toolPermissionMessage) {
+            this.toolPermissionMessage.textContent = data.message || 'Tool permission required';
+        }
+
+        // Show/hide buttons based on availability
+        if (this.toolDenyBtn) this.toolDenyBtn.style.display = data.hasDenyButton ? '' : 'none';
+        if (this.toolAllowOnceBtn) this.toolAllowOnceBtn.style.display = data.hasAllowOnceButton ? '' : 'none';
+        if (this.toolAllowConvBtn) this.toolAllowConvBtn.style.display = data.hasAllowConversationButton ? '' : 'none';
+
+        this.toolPermissionPopup.classList.add('show');
+    }
+
+    hideToolPermission() {
+        if (this.toolPermissionPopup) {
+            this.toolPermissionPopup.classList.remove('show');
+        }
+    }
+
+    async handleToolPermission(action) {
+        // Disable all buttons
+        const btns = [this.toolDenyBtn, this.toolAllowOnceBtn, this.toolAllowConvBtn];
+        btns.forEach(b => { if (b) b.disabled = true; });
+
+        const labelMap = { 'deny': 'Denying...', 'allow_once': 'Allowing...', 'allow_conversation': 'Allowing...' };
+        const activeBtn = action === 'deny' ? this.toolDenyBtn :
+                          action === 'allow_once' ? this.toolAllowOnceBtn : this.toolAllowConvBtn;
+        const originalText = activeBtn?.textContent;
+        if (activeBtn) activeBtn.textContent = labelMap[action] || 'Processing...';
+
+        try {
+            const response = await fetch('/click-tool-permission', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+
+            const result = await response.json();
+
+            if (result.ok) {
+                console.log(`Tool permission ${action} successful:`, result);
+                this.hideToolPermission();
+
+                setTimeout(() => {
+                    if (window.snapshotManager) {
+                        window.snapshotManager.loadSnapshot();
+                    }
+                }, 500);
+            } else {
+                console.error(`Tool permission ${action} failed:`, result);
+                alert(`Failed: ${result.reason || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error(`Error during tool permission ${action}:`, error);
+            alert(`Failed: ${error.message}`);
+        } finally {
+            btns.forEach(b => { if (b) b.disabled = false; });
+            if (activeBtn) activeBtn.textContent = originalText;
         }
     }
 

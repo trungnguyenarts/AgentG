@@ -15,14 +15,6 @@ class App {
             this.sendMessage();
         });
 
-        // Enter key to send (Shift+Enter for new line)
-        this.messageInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this.sendMessage();
-            }
-        });
-
         // Auto-resize textarea
         this.messageInput.addEventListener('input', () => {
             this.autoResizeTextarea();

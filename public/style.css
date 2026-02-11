@@ -35,6 +35,8 @@
   --radius-lg: 12px;
   --radius-full: 9999px;
 
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
   --transition-fast: 0.15s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.3s ease;
@@ -79,13 +81,33 @@ html {
   background: var(--bg-primary);
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+* {
+  font-family: var(--font-sans) !important;
+}
+
+::placeholder,
+::-webkit-input-placeholder,
+::-moz-placeholder,
+:-ms-input-placeholder,
+:-moz-placeholder {
+  font-family: var(--font-sans) !important;
+}
+
+body,
+input,
+textarea,
+button,
+select {
   background: var(--bg-primary);
   color: var(--text-primary);
-  height: 100vh;
-  overflow: hidden;
+  height: auto;
   transition: background var(--transition-normal), color var(--transition-normal);
+}
+
+body {
+  height: 100vh;
+  height: 100dvh; /* Dynamic viewport height - fixes iOS Chrome address bar issue */
+  overflow: hidden;
 }
 
 /* ============================================
@@ -96,8 +118,12 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* Dynamic viewport height - fixes iOS Chrome address bar issue */
   overflow: hidden;
   background: var(--bg-primary);
+  /* Safe area insets for notched devices */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* ============================================
@@ -206,10 +232,15 @@ body {
 
 .chat-content {
   min-height: 100%;
-  padding: 16px;
-  /* Padding at bottom for fixed input (approx input height) */
-  padding-bottom: 60px;
+  padding: 12px;
+  /* Increase padding bottom to ensure it's not obscured by fixed input */
+  padding-bottom: 90px;
+  /* Solid background to prevent text overlay/clashing */
   background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-sm);
+  /* Subtle elevation */
 }
 
 .loading-state {
@@ -418,6 +449,7 @@ body {
 
 .message-input::placeholder {
   color: var(--text-tertiary);
+  font-family: var(--font-sans) !important;
 }
 
 .message-input:focus {
@@ -720,6 +752,104 @@ body {
   font-size: 18px;
 }
 
+.session-section-header {
+  padding: 10px 16px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-default);
+}
+
+.session-section-header:first-of-type {
+  border-top: none;
+}
+
+.session-show-more {
+  color: var(--text-tertiary) !important;
+  font-size: 12px !important;
+  justify-content: center !important;
+  padding: 10px 16px !important;
+  opacity: 0.8;
+}
+
+.session-show-more:active {
+  opacity: 1;
+}
+
+/* ============================================
+   Instance / Model / Mode Controls
+   ============================================ */
+
+/* Header Action Button (Instance Switcher) */
+.header-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.header-btn:active {
+  transform: scale(0.95);
+  background: var(--accent-light);
+}
+
+/* Controls Row (Model/Mode Chips above input) */
+.controls-row {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0 6px;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.control-chip {
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  min-width: 40px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-sans);
+  text-align: center;
+  line-height: 1.3;
+}
+
+.control-chip:active {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.control-chip.active {
+  background: var(--accent-light);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+/* Option item width fix for modals */
+.option-item {
+  width: 100%;
+}
+
 /* ============================================
    Responsive Adjustments
    ============================================ */
@@ -772,11 +902,14 @@ body {
 .chat-content {
   background: var(--bg-primary);
   color: var(--text-primary);
+  font-family: var(--font-sans);
 }
 
-/* All text inherits theme color */
-.chat-content * {
-  color: inherit;
+/* All text inherits theme color if not explicitly set */
+.chat-content #agentg-chat-content,
+.chat-content #agentg-chat-content * {
+  color: var(--text-primary);
+  font-family: var(--font-sans) !important;
 }
 
 /* Code blocks styling */
@@ -922,27 +1055,32 @@ body {
   }
 
   .input-row {
-    flex-wrap: wrap;
-    gap: 8px;
+    flex-wrap: nowrap;
+    gap: 4px;
+    /* Tighter gap for small screens */
   }
 
   /* First row: attach + mic + input + send */
   .input-row .toolbar-btn {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     font-size: 16px;
+    padding: 0;
   }
 
   .input-row .message-input {
-    flex: 1 1 auto;
-    min-width: 100px;
-    order: 0;
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    /* Prevent iOS zoom */
+    padding: 8px 10px;
   }
 
   .input-row .send-btn {
-    height: 32px;
-    padding: 0 10px;
-    font-size: 13px;
+    height: 34px;
+    padding: 0 12px;
+    font-size: 14px;
+    flex-shrink: 0;
   }
 
   /* Second row: mode + model selectors */
@@ -951,19 +1089,15 @@ body {
     padding: 6px 8px;
   }
 
-  /* Make selectors wrap to second line */
+  /* Clear all ordering and pseudo-element hacks */
   .input-row::after {
-    content: '';
-    width: 100%;
-    order: 1;
+    display: none;
   }
 
-  .input-row .selector:nth-of-type(1) {
-    order: 2;
-    margin-left: auto;
-  }
-
-  .input-row .selector:nth-of-type(2) {
-    order: 3;
+  .input-row .selector,
+  .input-row .message-input,
+  .input-row .send-btn,
+  .input-row .toolbar-btn {
+    order: unset !important;
   }
 }

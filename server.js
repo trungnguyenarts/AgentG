@@ -20,6 +20,10 @@ let cdpConnection = null;
 let lastSnapshot = null;
 let lastSnapshotHash = null;
 
+// Instance management
+let discoveredInstances = [];
+let activeTargetId = null;
+
 // Ensure upload directories exist
 async function ensureUploadDirs() {
     const dirs = ['uploads', 'uploads/files', 'uploads/audio'];
@@ -68,6 +72,44 @@ function getJson(url) {
     });
 }
 
+// Discover ALL Antigravity CDP targets across all ports
+async function discoverAllTargets() {
+    const allTargets = [];
+    const seen = new Set();
+
+    const checkPort = async (port) => {
+        try {
+            const list = await getJson(`http://127.0.0.1:${port}/json/list`);
+            return list
+                .filter(t =>
+                    (t.url?.includes('workbench.html') || (t.title && t.title.includes('Antigravity'))) &&
+                    t.type !== 'worker' &&
+                    t.webSocketDebuggerUrl
+                )
+                .map(t => ({
+                    id: t.id,
+                    port,
+                    url: t.webSocketDebuggerUrl,
+                    title: t.title || `Target ${t.id.substring(0, 8)}`,
+                    pageUrl: t.url
+                }));
+        } catch (e) {
+            return [];
+        }
+    };
+
+    const results = await Promise.all(PORTS.map(checkPort));
+    for (const portTargets of results) {
+        for (const t of portTargets) {
+            if (!seen.has(t.url)) {
+                seen.add(t.url);
+                allTargets.push(t);
+            }
+        }
+    }
+    return allTargets;
+}
+
 // Find Antigravity CDP endpoint (Parallel)
 async function discoverCDP() {
     console.log(`🔍 Scanning ports ${PORTS.join(', ')} in parallel...`);
@@ -81,7 +123,7 @@ async function discoverCDP() {
                 t.type !== 'worker'
             );
             if (found && found.webSocketDebuggerUrl) {
-                return { port, url: found.webSocketDebuggerUrl, title: found.title };
+                return { port, url: found.webSocketDebuggerUrl, title: found.title, id: found.id };
             }
         } catch (e) {
             // error connecting to this port, ignore
@@ -97,7 +139,7 @@ async function discoverCDP() {
 
     if (match) {
         console.log(`🎯 Found candidate on port ${match.port}: ${match.title}`);
-        return { port: match.port, url: match.url };
+        return { port: match.port, url: match.url, id: match.id };
     }
 
     throw new Error('CDP not found. Ensure Antigravity is running with remote debugging enabled.');
@@ -186,99 +228,177 @@ function getCDPStatus() {
 // Capture chat snapshot
 async function captureSnapshot(cdp) {
     const CAPTURE_SCRIPT = `(() => {
-        // Try multiple selectors to find chat content
-        // 1. Chat messages container (text-ide-message-block-bot-color)
-        let chatContainer = document.querySelector('div[class*="text-ide-message-block-bot-color"]');
-        // 2. Scrollable chat area (new Antigravity)
-        if (!chatContainer) chatContainer = document.querySelector('div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto');
-        // 3. Legacy cascade
-        if (!chatContainer) chatContainer = document.getElementById('cascade');
-        if (!chatContainer) return { error: 'cascade not found', debug: document.body?.innerHTML?.substring(0, 200) };
-
-        const containerStyles = window.getComputedStyle(chatContainer);
-        const clone = chatContainer.cloneNode(true);
-
-        // Remove input/editor area from clone
-        const inputEditor = clone.querySelector('[contenteditable="true"]');
-        if (inputEditor) {
-            const inputContainer = inputEditor.closest('div');
-            if (inputContainer && inputContainer !== clone) inputContainer.remove();
-        }
-
-        // Remove style tags
-        const styleTags = clone.querySelectorAll('style');
-        styleTags.forEach(tag => tag.remove());
-
-        // Strip inline color styles
-        function stripColorStyles(element) {
-            if (element.style) {
-                element.style.color = '';
-                element.style.backgroundColor = '';
-                element.style.background = '';
-                element.style.borderColor = '';
-                element.style.fill = '';
-                element.style.stroke = '';
+        try {
+            const containerSelectors = [
+                'div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto', 
+                '#conversation > div.relative.flex.flex-col',
+                '#conversation',
+                'div.relative.flex.w-full.grow.flex-col.overflow-clip',
+                'div.flex.w-full.grow.flex-col.overflow-hidden',
+                '#chat',
+                '#cascade',
+                '.titlebar.cascade-panel-open',
+                '.cascade-bar'
+            ];
+            
+            let container;
+            for (const sel of containerSelectors) {
+                container = document.querySelector(sel);
+                if (container) {
+                    console.log('[Snapshot] Found container via: ' + sel);
+                    break;
+                }
             }
-            for (const child of element.children) stripColorStyles(child);
-        }
-        stripColorStyles(clone);
 
-        const html = clone.outerHTML;
-        let allCSS = '';
-        for (const sheet of document.styleSheets) {
-            try {
-                for (const rule of sheet.cssRules) allCSS += rule.cssText + '\\n';
-            } catch (e) { }
-        }
+            if (!container) return { error: 'chat container not found' };
 
-        return {
-            html: html,
-            css: allCSS,
-            backgroundColor: containerStyles.backgroundColor,
-            color: containerStyles.color,
-            fontFamily: containerStyles.fontFamily
-        };
+            const clone = container.cloneNode(true);
+            clone.id = 'agentg-chat-content';
+
+            // Cleanup spacers and styles
+            clone.querySelectorAll('[style]').forEach(el => {
+                if (el.style.minHeight && parseInt(el.style.minHeight) > 2000) el.style.minHeight = 'auto';
+            });
+            const inputEditor = clone.querySelector('[contenteditable="true"]');
+            if (inputEditor) {
+                let inputContainer = inputEditor.closest('div.flex-col') || inputEditor.closest('div');
+                if (inputContainer && inputContainer !== clone) inputContainer.remove();
+            }
+            clone.querySelectorAll('style').forEach(tag => tag.remove());
+
+            // Add Snapshot Reset Styles directly to the clone
+            const styleTag = document.createElement('style');
+            styleTag.textContent = \`
+                #agentg-chat-content { 
+                    width: 100% !important; 
+                    max-width: 100% !important; 
+                    word-wrap: break-word !important; 
+                    overflow-wrap: break-word !important; 
+                    display: flex !important; 
+                    flex-direction: column !important; 
+                    gap: 12px !important;
+                    padding: 12px !important;
+                    box-sizing: border-box !important;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+                } 
+                #agentg-chat-content *, #agentg-chat-content *::before, #agentg-chat-content *::after { 
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+                }
+                #agentg-chat-content img { 
+                    max-width: 100% !important; 
+                    height: auto !important; 
+                    object-fit: contain !important; 
+                    border-radius: 8px !important; 
+                    margin: 8px 0 !important; 
+                    display: block !important;
+                } 
+                #agentg-chat-content * { 
+                    max-width: 100% !important; 
+                    box-sizing: border-box !important; 
+                }
+                /* Hide vertical scrollbar placeholders */
+                #agentg-chat-content::-webkit-scrollbar { display: none !important; }
+            \`;
+            clone.appendChild(styleTag);
+
+            const html = clone.outerHTML;
+            let allCSS = '';
+            for (const sheet of document.styleSheets) {
+                try {
+                    for (const rule of sheet.cssRules) {
+                        let text = rule.cssText;
+                        if (text.length > 5000) continue;
+                        text = text.replace(/(^|[\\\\s,}])body(?=[\\\\s,{])/gi, '$1#agentg-chat-content');
+                        text = text.replace(/(^|[\\\\s,}])html(?=[\\\\s,{])/gi, '$1#agentg-chat-content');
+                        allCSS += text + '\\n';
+                    }
+                } catch (e) { }
+            }
+            const styles = window.getComputedStyle(container);
+            return {
+                html: html,
+                css: allCSS,
+                backgroundColor: styles.backgroundColor,
+                color: styles.color,
+                fontFamily: styles.fontFamily
+            };
+        } catch (e) { return { error: e.toString() }; }
     })()`;
 
     const contexts = cdp.getContexts();
+    let bestSnapshot = null;
+    let maxScore = -1;
 
-    // Sort contexts: prioritize cascade-panel contexts (where chat lives)
-    const sorted = [...contexts].sort((a, b) => {
-        const aIsCascade = (a.origin || '').includes('cascade') || (a.name || '').includes('cascade') ? -1 : 0;
-        const bIsCascade = (b.origin || '').includes('cascade') || (b.name || '').includes('cascade') ? -1 : 0;
-        return aIsCascade - bIsCascade;
-    });
+    console.log(`🔍 Sweeping ${contexts.length} contexts for real chat...`);
 
-    for (const ctx of sorted) {
+    for (const ctx of contexts) {
         try {
-            const result = await cdp.call("Runtime.evaluate", {
-                expression: CAPTURE_SCRIPT,
+            const probeResult = await cdp.call("Runtime.evaluate", {
+                expression: `(() => {
+    // Refined message counting: prioritize data-message-id, fallback to bubble/row
+    const messages = document.querySelectorAll('[data-message-id], .chat-bubble, .message-row').length;
+    const hasConversation = !!document.getElementById('conversation');
+    const hasCascade = !!document.getElementById('cascade');
+    const hasLexical = !!document.querySelector('[data-lexical-editor="true"]');
+    const isAgentManager = document.title === 'Agent Manager' || !!document.querySelector('.agent-manager-container');
+
+    return {
+        messageCount: messages,
+        hasConversation,
+        hasCascade,
+        hasLexical,
+        isAgentManager,
+        htmlLength: document.body.innerHTML.length,
+        title: document.title,
+        protocol: window.location.protocol
+    };
+})()`,
                 returnByValue: true,
                 contextId: ctx.id
             });
-            if (result.result && result.result.value) {
-                const val = result.result.value;
-                // Skip if error or HTML is too short (empty container)
-                if (val.error) continue;
-                if (val.html && val.html.length > 200) return val;
+
+            if (probeResult.result && probeResult.result.value) {
+                const info = probeResult.result.value;
+
+                const snapResult = await cdp.call("Runtime.evaluate", {
+                    expression: CAPTURE_SCRIPT,
+                    returnByValue: true,
+                    contextId: ctx.id
+                });
+
+                if (snapResult.result && snapResult.result.value && !snapResult.result.value.error) {
+                    const snap = snapResult.result.value;
+
+                    // STRICT SCORING LOGIC (Multiplier Strategy)
+                    let score = (info.messageCount * 20000);
+                    if (info.hasLexical) score += 10000;
+
+                    // The "Golden" Multiplier: If it has #conversation or #cascade, it MUST win
+                    if (info.hasConversation || info.hasCascade) {
+                        score += 50000;
+                        score *= 10;
+                    }
+
+                    if (info.isAgentManager) score -= 1000000; // Nuclear penalty
+                    if (info.protocol === 'vscode-webview:') score += 10000;
+
+                    score += info.htmlLength / 1000;
+
+                    console.log(`   [Context ${ctx.id}]Name: "${ctx.name || 'n/a'}", Messages: ${info.messageCount}, Lexical: ${info.hasLexical}, Conv: ${info.hasConversation || info.hasCascade}, Score: ${Math.round(score)} `);
+
+                    if (score > maxScore) {
+                        maxScore = score;
+                        bestSnapshot = snap;
+                        console.log(`     -> NEW WINNER(Score: ${Math.round(score)})`);
+                    }
+                }
             }
-        } catch (e) { }
+        } catch (e) {
+            console.log(`   [Context ${ctx.id}]Failed: ${e.message} `);
+        }
     }
 
-    // Fallback: return whatever we can get (even short HTML)
-    for (const ctx of sorted) {
-        try {
-            const result = await cdp.call("Runtime.evaluate", {
-                expression: CAPTURE_SCRIPT,
-                returnByValue: true,
-                contextId: ctx.id
-            });
-            if (result.result && result.result.value && !result.result.value.error) {
-                return result.result.value;
-            }
-        } catch (e) { }
-    }
-    return null;
+    return bestSnapshot;
 }
 
 // Inject message into Antigravity
@@ -310,9 +430,9 @@ async function injectMessage(cdp, text) {
             try {
                 const busyCheck = await cdp.call("Runtime.evaluate", {
                     expression: `(() => {
-                        const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-                        return cancel && cancel.offsetParent !== null;
-                    })()`,
+    const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+    return cancel && cancel.offsetParent !== null;
+})()`,
                     returnByValue: true,
                     contextId: ctx.id
                 });
@@ -347,40 +467,72 @@ async function injectMessage(cdp, text) {
         try {
             const check = await cdp.call("Runtime.evaluate", {
                 expression: `(() => {
-                    let cascade = document.querySelector('div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto');
-                    if (!cascade) cascade = document.getElementById('cascade');
-                    const editor = document.querySelector('[contenteditable="true"]');
-                    const hasValidEditor = editor && editor.offsetParent !== null;
-                    const hasCascade = cascade && cascade.offsetParent !== null;
-                    
-                    return {
-                        hasCascade: hasCascade,
-                        hasEditor: hasValidEditor,
-                        isValid: hasCascade && hasValidEditor,
-                        url: window.location.href
-                    };
-                })()`,
+    // Check for the specific conversation container inside cascade-panel
+    const cascadeSelectors = [
+        '#conversation > div.relative.flex.flex-col',
+        '#conversation',
+        'div.relative.flex.w-full.grow.flex-col.overflow-clip.overflow-y-auto',
+        'div.flex.w-full.grow.flex-col.overflow-hidden',
+        '#chat',
+        '#cascade',
+        '.titlebar.cascade-panel-open',
+        '.cascade-bar'
+    ];
+
+    let cascade = null;
+    for (const sel of cascadeSelectors) {
+        cascade = document.querySelector(sel);
+        if (cascade) break;
+    }
+
+    const editorSelectors = [
+        '#cascade [data-lexical-editor="true"][contenteditable="true"]',
+        '[data-lexical-editor="true"][contenteditable="true"]',
+        '[contenteditable="true"][role="textbox"]',
+        'div.max-h-\\\\[300px\\\\].rounded.cursor-text'
+    ];
+
+    let editor = null;
+    for (const sel of editorSelectors) {
+        const el = [...document.querySelectorAll(sel)].filter(e => e.offsetParent !== null).at(-1);
+        if (el) {
+            editor = el;
+            break;
+        }
+    }
+
+    const hasValidEditor = !!editor;
+    const hasCascade = cascade && cascade.offsetParent !== null;
+
+    return {
+        hasCascade: hasCascade,
+        hasEditor: hasValidEditor,
+        isValid: hasCascade && hasValidEditor,
+        url: window.location.href,
+        foundSelector: cascade ? (cascade.id || cascade.className) : 'none'
+    };
+})()`,
                 returnByValue: true,
                 contextId: ctx.id
             });
 
             if (check?.result?.value?.isValid) {
                 console.log(`✅ Found Antigravity chat context ${ctx.id} (${ctx.name})`);
-                console.log(`   - Has cascade: ${check.result.value.hasCascade}`);
-                console.log(`   - Has editor: ${check.result.value.hasEditor}`);
-                console.log(`   - URL: ${check.result.value.url}`);
+                console.log(`   - Has cascade: ${check.result.value.hasCascade} `);
+                console.log(`   - Has editor: ${check.result.value.hasEditor} `);
+                console.log(`   - URL: ${check.result.value.url} `);
                 targetContext = ctx;
                 break;
             }
         } catch (e) {
-            console.log(`   ⚠️ Context ${ctx.id} check failed: ${e.message}`);
+            console.log(`   ⚠️ Context ${ctx.id} check failed: ${e.message} `);
         }
     }
 
     if (!targetContext) {
         console.error("❌ Could not find valid Antigravity chat context!");
         console.log("Available contexts:");
-        contexts.forEach(ctx => console.log(`   - Context ${ctx.id}: ${ctx.name}`));
+        contexts.forEach(ctx => console.log(`   - Context ${ctx.id}: ${ctx.name} `));
         return {
             ok: false,
             reason: "no_valid_context",
@@ -392,151 +544,155 @@ async function injectMessage(cdp, text) {
     const escapedText = JSON.stringify(text);
 
     const EXPRESSION = `(async () => {
-        const textToInject = ${escapedText};
-        console.log("🚀 Starting injection for text: " + textToInject.substring(0, 50) + "...");
-        
-        // Check for busy state (Cancel button)
-        const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-        if (cancel && cancel.offsetParent !== null) {
-            // Wait a bit to see if it clears
-            await new Promise(r => setTimeout(r, 1000));
-            if (document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]')) {
-                 return { ok: false, reason: "busy", details: "Input is busy (generating response)" };
-            }
+    const textToInject = ${escapedText};
+    console.log("🚀 Starting injection for text: " + textToInject.substring(0, 50) + "...");
+
+    // Check for busy state (Cancel button)
+    const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+    if (cancel && cancel.offsetParent !== null) {
+        // Wait a bit to see if it clears
+        await new Promise(r => setTimeout(r, 1000));
+        if (document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]')) {
+            return { ok: false, reason: "busy", details: "Input is busy (generating response)" };
         }
+    }
 
-        let editor = document.querySelector('[data-lexical-editor="true"][contenteditable="true"]');
-        if (!editor) editor = document.querySelector('[contenteditable="true"]');
-        
-        if (!editor) {
-            console.error("❌ Editor not found!");
-            return { ok:false, error:"editor_not_found" };
+    const editorSelectors = [
+        '#cascade [data-lexical-editor="true"][contenteditable="true"]',
+        '[data-lexical-editor="true"][contenteditable="true"]',
+        '[contenteditable="true"][role="textbox"]',
+        'div.max-h-\\\\[300px\\\\].rounded.cursor-text'
+    ];
+
+    let editor = null;
+    for (const sel of editorSelectors) {
+        const el = [...document.querySelectorAll(sel)].filter(e => e.offsetParent !== null).at(-1);
+        if (el) {
+            editor = el;
+            break;
         }
+    }
 
-        console.log("✅ Editor found, focusing...");
-        editor.focus();
-        
-        // 1. Clear existing content
-        document.execCommand("selectAll", false, null);
-        document.execCommand("delete", false, null);
+    if (!editor) {
+        console.error("❌ Editor not found!");
+        return { ok: false, error: "editor_not_found" };
+    }
 
-        // 2. Set text via clipboard API (best for Lexical)
-        const dataTransfer = new DataTransfer();
-        dataTransfer.setData('text/plain', textToInject);
-        editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dataTransfer, bubbles: true, cancelable: true }));
+    console.log("✅ Editor found, focusing...");
+    editor.focus();
 
-        // 3. Fallback direct entry if empty
-        if (!editor.textContent.trim()) {
-             console.log("⚠️ Paste failed, using direct textContent...");
-             editor.textContent = textToInject;
-             editor.dispatchEvent(new InputEvent("input", { bubbles:true }));
+    // 1. Clear existing content
+    document.execCommand("selectAll", false, null);
+    document.execCommand("delete", false, null);
+
+    // 2. Set text via clipboard API (best for Lexical)
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', textToInject);
+    editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dataTransfer, bubbles: true, cancelable: true }));
+
+    // 3. Fallback direct entry if empty
+    if (!editor.textContent.trim()) {
+        console.log("⚠️ Paste failed, using direct textContent...");
+        editor.textContent = textToInject;
+        editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    }
+
+    console.log("📝 Text injected, editor content: " + editor.textContent.substring(0, 50) + "...");
+
+    await new Promise(r => setTimeout(r, 500));
+
+    // Strategy 1: Look for button with data-command attribute (VS Code pattern)
+    console.log("🔍 Strategy 1: Looking for button with data-command...");
+    let submit = document.querySelector('button[data-command*="submit"], button[data-command*="send"], button[data-command*="chat.submit"]');
+
+    if (!submit) {
+        // Strategy 2: Find button within the chat input container
+        console.log("🔍 Strategy 2: Looking within input container...");
+        const inputContainer = editor.closest('div[class*="input"], div[class*="chat"]');
+        if (inputContainer) {
+            submit = inputContainer.querySelector('button:not([disabled])');
+            console.log("Found " + (submit ? "1" : "0") + " enabled button in container");
         }
+    }
 
-        console.log("📝 Text injected, editor content: " + editor.textContent.substring(0, 50) + "...");
-
-        await new Promise(r => setTimeout(r, 500));
-
-        // Strategy 1: Look for button with data-command attribute (VS Code pattern)
-        console.log("🔍 Strategy 1: Looking for button with data-command...");
-        let submit = document.querySelector('button[data-command*="submit"], button[data-command*="send"], button[data-command*="chat.submit"]');
-        
-        if (!submit) {
-            // Strategy 2: Find button within the chat input container
-            console.log("🔍 Strategy 2: Looking within input container...");
-            const inputContainer = editor.closest('div[class*="input"], div[class*="chat"]');
-            if (inputContainer) {
-                submit = inputContainer.querySelector('button:not([disabled])');
-                console.log("Found " + (submit ? "1" : "0") + " enabled button in container");
-            }
+    if (!submit) {
+        // Strategy 3: Look for button with specific CSS classes
+        console.log("🔍 Strategy 3: Looking for buttons with send/submit classes...");
+        const buttons = [...document.querySelectorAll('button')].filter(btn => {
+            const classes = btn.className.toLowerCase();
+            return (classes.includes('send') || classes.includes('submit')) && !btn.disabled;
+        });
+        if (buttons.length > 0) {
+            submit = buttons[0];
+            console.log("Found button with send/submit class");
         }
-        
-        if (!submit) {
-            // Strategy 3: Look for button with specific CSS classes
-            console.log("🔍 Strategy 3: Looking for buttons with send/submit classes...");
-            const buttons = [...document.querySelectorAll('button')].filter(btn => {
-                const classes = btn.className.toLowerCase();
-                return (classes.includes('send') || classes.includes('submit')) && !btn.disabled;
-            });
-            if (buttons.length > 0) {
-                submit = buttons[0];
-                console.log("Found button with send/submit class");
-            }
-        }
+    }
 
-        if (!submit) {
-            // Strategy 4: Look for arrow icon (common pattern)
-            console.log("🔍 Strategy 4: Looking for arrow-right icon...");
-            const arrowIcons = [...document.querySelectorAll('svg')].filter(svg => 
-                svg.classList.contains('lucide-arrow-right') || 
-                svg.classList.contains('codicon-send') ||
-                svg.innerHTML.includes('arrow-right') ||
-                svg.innerHTML.includes('M12 5l7 7-7 7') // Common arrow path
-            );
-            console.log("Found " + arrowIcons.length + " arrow icons");
-            if (arrowIcons.length > 0) {
-                submit = arrowIcons[0].closest('button');
-            }
-        }
+    if (!submit) {
+        // Strategy 4: Look for arrow icon (common pattern)
+        console.log("🔍 Strategy 4: Looking for arrow-right icon...");
+        submit = document.querySelector('button:has(svg.lucide-arrow-right), button:has(svg.lucide-send), button:has(svg.lucide-check)');
+    }
 
-        // Try clicking the button if found
-        if (submit && !submit.disabled) {
-            console.log("✅ Submit button found and enabled, clicking...");
-            submit.click();
-            
-            // Wait a bit and verify if it worked
-            await new Promise(r => setTimeout(r, 300));
-            const stillHasContent = editor.textContent.trim().length > 0;
-            
-            if (!stillHasContent) {
-                console.log("✅ Message sent successfully (editor cleared)");
-                return { ok: true, method: "click_submit", verified: true };
-            } else {
-                console.log("⚠️ Button clicked but editor still has content");
-                return { ok: true, method: "click_submit", verified: false };
-            }
-        } else if (submit) {
-            console.log("⚠️ Submit button found but DISABLED");
+    // Try clicking the button if found
+    if (submit && !submit.disabled) {
+        console.log("✅ Submit button found and enabled, clicking...");
+        submit.click();
+
+        // Wait a bit and verify if it worked
+        await new Promise(r => setTimeout(r, 300));
+        const stillHasContent = editor.textContent.trim().length > 0;
+
+        if (!stillHasContent) {
+            console.log("✅ Message sent successfully (editor cleared)");
+            return { ok: true, method: "click_submit", verified: true };
         } else {
-            console.log("❌ Submit button NOT FOUND after all strategies");
+            console.log("⚠️ Button clicked but editor still has content");
+            return { ok: true, method: "click_submit", verified: false };
         }
+    } else if (submit) {
+        console.log("⚠️ Submit button found but DISABLED");
+    } else {
+        console.log("❌ Submit button NOT FOUND after all strategies");
+    }
 
-        // Strategy 5: Try keyboard shortcuts
-        console.log("🔍 Strategy 5: Trying keyboard shortcuts...");
-        
-        // Try Cmd+Enter (Mac) or Ctrl+Enter (Windows)
-        editor.dispatchEvent(new KeyboardEvent("keydown", { 
-            bubbles: true, 
-            key: "Enter", 
-            code: "Enter", 
-            keyCode: 13, 
-            which: 13,
-            metaKey: true,  // Cmd on Mac
-            ctrlKey: true   // Ctrl on Windows
-        }));
-        
-        await new Promise(r => setTimeout(r, 300));
-        const clearedAfterShortcut = editor.textContent.trim().length === 0;
-        
-        if (clearedAfterShortcut) {
-            console.log("✅ Message sent via keyboard shortcut");
-            return { ok: true, method: "keyboard_shortcut", verified: true };
-        }
-        
-        // Last resort: plain Enter
-        console.log("⌨️ Last resort: Trying plain Enter key...");
-        editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles:true, key:"Enter", code:"Enter", keyCode: 13, which: 13 }));
-        editor.dispatchEvent(new KeyboardEvent("keyup", { bubbles:true, key:"Enter", code:"Enter", keyCode: 13, which: 13 }));
-        
-        await new Promise(r => setTimeout(r, 300));
-        const clearedAfterEnter = editor.textContent.trim().length === 0;
-        
-        return { 
-            ok: clearedAfterEnter, 
-            method: "enter_keypress", 
-            verified: clearedAfterEnter,
-            editorStillHasContent: !clearedAfterEnter
-        };
-    })()`;
+    // Strategy 5: Try keyboard shortcuts
+    console.log("🔍 Strategy 5: Trying keyboard shortcuts...");
+
+    // Try Cmd+Enter (Mac) or Ctrl+Enter (Windows)
+    editor.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        key: "Enter",
+        code: "Enter",
+        keyCode: 13,
+        which: 13,
+        metaKey: true,  // Cmd on Mac
+        ctrlKey: true   // Ctrl on Windows
+    }));
+
+    await new Promise(r => setTimeout(r, 300));
+    const clearedAfterShortcut = editor.textContent.trim().length === 0;
+
+    if (clearedAfterShortcut) {
+        console.log("✅ Message sent via keyboard shortcut");
+        return { ok: true, method: "keyboard_shortcut", verified: true };
+    }
+
+    // Last resort: plain Enter
+    console.log("⌨️ Last resort: Trying plain Enter key...");
+    editor.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
+    editor.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Enter", code: "Enter", keyCode: 13, which: 13 }));
+
+    await new Promise(r => setTimeout(r, 300));
+    const clearedAfterEnter = editor.textContent.trim().length === 0;
+
+    return {
+        ok: clearedAfterEnter,
+        method: "enter_keypress",
+        verified: clearedAfterEnter,
+        editorStillHasContent: !clearedAfterEnter
+    };
+})()`;
 
     try {
         const result = await cdp.call("Runtime.evaluate", {
@@ -571,40 +727,63 @@ async function injectMessage(cdp, text) {
 // Check if there's a pending action requiring approval
 async function checkPendingAction(cdp) {
     const CHECK_SCRIPT = `(() => {
-    // Look for "Run command?" text which appears in the approval prompt
-    const runCommandText = [...document.querySelectorAll('#cascade *')].find(
-        el => el.textContent?.includes('Run command?') && el.offsetParent !== null
-    );
+    const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
 
-    // Look for Accept/Reject buttons
-    const acceptBtn = document.querySelector('#cascade button[class*="accept"], #cascade button:has(svg.lucide-check)') ||
-        [...document.querySelectorAll('#cascade button')].find(btn =>
-            btn.textContent?.toLowerCase().includes('accept') && btn.offsetParent !== null
-        );
+    // STRICT detection: Find the approval prompt container
+    // Antigravity shows "Run command?" or "Run tool?" text near Reject/Run buttons
+    // The buttons are inside a flex container: <div class="ml-auto flex items-center gap-1">
 
-    const rejectBtn = document.querySelector('#cascade button[class*="reject"], #cascade button:has(svg.lucide-x)') ||
-        [...document.querySelectorAll('#cascade button')].find(btn =>
-            btn.textContent?.toLowerCase().includes('reject') && btn.offsetParent !== null
-        );
+    // Step 1: Find the prompt text element
+    const promptEl = [...scope.querySelectorAll('*')].find(el => {
+        const t = el.textContent || '';
+        return (t.includes('Run command?') || t.includes('Run tool?') || t.includes('Action requires approval'))
+            && el.offsetParent !== null
+            && el.children.length < 10; // Avoid matching huge parent containers
+    });
 
-    if (runCommandText || acceptBtn || rejectBtn) {
-        // Try to get command info
-        let commandText = '';
-        const codeBlock = document.querySelector('#cascade pre code, #cascade .code-block');
-        if (codeBlock) {
-            commandText = codeBlock.textContent?.slice(0, 200) || '';
-        }
-
-        return {
-            hasPendingAction: true,
-            hasAcceptButton: !!acceptBtn,
-            hasRejectButton: !!rejectBtn,
-            commandPreview: commandText,
-            prompt: runCommandText?.textContent?.slice(0, 100) || 'Action requires approval'
-        };
+    if (!promptEl) {
+        return { hasPendingAction: false };
     }
 
-    return { hasPendingAction: false };
+    // Step 2: Find the approval container (ancestor with Reject + Run buttons nearby)
+    // Walk up from promptEl to find a container that also holds the action buttons
+    let container = promptEl;
+    let runBtn = null;
+    let rejectBtn = null;
+
+    for (let i = 0; i < 8; i++) {
+        container = container.parentElement;
+        if (!container) break;
+
+        const btns = [...container.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+
+        runBtn = btns.find(b => {
+            const text = (b.textContent || '').trim();
+            return /^Run\\b/i.test(text) && !text.toLowerCase().startsWith('always');
+        });
+
+        rejectBtn = btns.find(b => {
+            const text = (b.textContent || '').trim().toLowerCase();
+            return text === 'reject' || text.startsWith('reject');
+        });
+
+        if (runBtn || rejectBtn) break;
+    }
+
+    // Must have at least the prompt text to be considered a real pending action
+    let commandText = '';
+    const codeBlock = scope.querySelector('pre code, .code-block');
+    if (codeBlock) {
+        commandText = codeBlock.textContent?.slice(0, 200) || '';
+    }
+
+    return {
+        hasPendingAction: true,
+        hasAcceptButton: !!runBtn,
+        hasRejectButton: !!rejectBtn,
+        commandPreview: commandText,
+        prompt: promptEl.textContent?.slice(0, 100) || 'Action requires approval'
+    };
 })()`;
 
     const contexts = cdp.getContexts();
@@ -629,36 +808,72 @@ async function checkPendingAction(cdp) {
 async function clickActionButton(cdp, action) {
     const CLICK_SCRIPT = `(async () => {
     const actionType = "${action}";
+    const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
+    let targetBtn = null;
 
-    // Strategy 1: Find by text content
-    let targetBtn = [...document.querySelectorAll('#cascade button')].find(btn => {
-        const text = btn.textContent?.toLowerCase() || '';
-        if (actionType === 'accept') {
-            return (text.includes('accept') || text.includes('run') || text.includes('yes')) && btn.offsetParent !== null;
-        } else {
-            return (text.includes('reject') || text.includes('cancel') || text.includes('no')) && btn.offsetParent !== null;
-        }
+    // Strategy 1: Find the "Run command?" prompt, then locate buttons in its container
+    const promptEl = [...scope.querySelectorAll('*')].find(el => {
+        const t = el.textContent || '';
+        return (t.includes('Run command?') || t.includes('Run tool?'))
+            && el.offsetParent !== null
+            && el.children.length < 10;
     });
 
-    // Strategy 2: Find by icon (lucide icons)
-    if (!targetBtn) {
-        if (actionType === 'accept') {
-            targetBtn = document.querySelector('#cascade button:has(svg.lucide-check), #cascade button:has(svg[class*="check"])');
-        } else {
-            targetBtn = document.querySelector('#cascade button:has(svg.lucide-x), #cascade button:has(svg[class*="x"])');
+    if (promptEl) {
+        // Walk up from prompt to find container with action buttons
+        let container = promptEl;
+        for (let i = 0; i < 8; i++) {
+            container = container.parentElement;
+            if (!container) break;
+
+            const btns = [...container.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+
+            if (actionType === 'accept') {
+                // Find "Run" button (NOT "Always run")
+                targetBtn = btns.find(b => {
+                    const text = (b.textContent || '').trim();
+                    return /^Run\\b/i.test(text) && !text.toLowerCase().startsWith('always');
+                });
+                // Fallback: bg-primary button in this container
+                if (!targetBtn) {
+                    targetBtn = btns.find(b => b.classList.contains('bg-primary'));
+                }
+            } else {
+                // Find "Reject" button
+                targetBtn = btns.find(b => {
+                    const text = (b.textContent || '').trim().toLowerCase();
+                    return text === 'reject' || text.startsWith('reject');
+                });
+            }
+
+            if (targetBtn) break;
         }
     }
 
-    // Strategy 3: Simulate keyboard shortcut
+    // Strategy 2: Broader search - buttons with specific classes anywhere on page
+    if (!targetBtn) {
+        const allBtns = [...scope.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+        if (actionType === 'accept') {
+            targetBtn = allBtns.find(b => {
+                const text = (b.textContent || '').trim();
+                return /^Run\\b/i.test(text) && !text.toLowerCase().startsWith('always');
+            });
+        } else {
+            targetBtn = allBtns.find(b => {
+                const text = (b.textContent || '').trim().toLowerCase();
+                return text === 'reject';
+            });
+        }
+    }
+
+    // Strategy 3: Keyboard shortcut fallback
     if (!targetBtn) {
         const editor = document.querySelector('[contenteditable="true"]');
         if (editor) {
             if (actionType === 'accept') {
-                // Alt+Enter for accept
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', altKey: true, bubbles: true }));
                 return { ok: true, method: 'keyboard_alt_enter' };
             } else {
-                // Escape for reject
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
                 return { ok: true, method: 'keyboard_escape' };
             }
@@ -669,7 +884,6 @@ async function clickActionButton(cdp, action) {
         return { ok: false, reason: 'button_not_found', action: actionType };
     }
 
-    // Click the button
     targetBtn.click();
 
     return {
@@ -704,7 +918,8 @@ async function clickActionButton(cdp, action) {
 async function checkStepConfirmation(cdp) {
     const CHECK_SCRIPT = `(() => {
     // Debug: Log potential candidates
-    const allButtons = [...document.querySelectorAll('#cascade button')];
+    const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
+    const allButtons = [...scope.querySelectorAll('button')];
     const confirmBtnCandidate = allButtons.find(b => b.textContent.toLowerCase().includes('confirm'));
     if (confirmBtnCandidate) {
         console.log('[StepConfirm Debug] Found Confirm Button:', confirmBtnCandidate.textContent);
@@ -712,10 +927,10 @@ async function checkStepConfirmation(cdp) {
 
     // 1. Look for "Confirmation required" text anywhere in cascade
     // We look for a container or text element
-    const confirmText = [...document.querySelectorAll('#cascade *')].find(
-        el => el.textContent && el.textContent.includes('Confirmation required') 
-              && el.children.length === 0 // Leaf node or text node preferred
-              && el.offsetParent !== null // Visible
+    const confirmText = [...scope.querySelectorAll('*')].find(
+        el => el.textContent && el.textContent.includes('Confirmation required')
+            && el.children.length === 0 // Leaf node or text node preferred
+            && el.offsetParent !== null // Visible
     );
 
     // 2. Look for Confirm/Deny buttons anywhere in cascade
@@ -724,8 +939,8 @@ async function checkStepConfirmation(cdp) {
     );
 
     const denyBtn = allButtons.find(btn =>
-        (btn.textContent?.toLowerCase().includes('deny') || 
-         btn.textContent?.toLowerCase().includes('cancel')) && btn.offsetParent !== null
+        (btn.textContent?.toLowerCase().includes('deny') ||
+            btn.textContent?.toLowerCase().includes('cancel')) && btn.offsetParent !== null
     );
 
     // 3. Validation: Must have BOTH text AND at least one button
@@ -785,18 +1000,18 @@ async function checkBrowserPermission(cdp) {
     while (node = walker.nextNode()) {
         const text = node.textContent;
         // Check for key phrases
-        if ((text.includes('Agent needs permission') || 
-             text.includes('needs permission to act') || 
-             text.includes('Opening URL in Browser')) &&
+        if ((text.includes('Agent needs permission') ||
+            text.includes('needs permission to act') ||
+            text.includes('Opening URL in Browser')) &&
             !text.includes('This is a browser security dialog')) { // Exclude our own popup
-            
+
             const parent = node.parentElement;
             if (!parent) continue;
 
             // STRICT MODE: Only accept if parent is a known dialog container
             // This prevents detecting text in chat history, editor, terminal, etc.
-            if (!parent.closest('.monaco-dialog-box') && 
-                !parent.closest('.notification-toast') && 
+            if (!parent.closest('.monaco-dialog-box') &&
+                !parent.closest('.notification-toast') &&
                 !parent.closest('.notifications-center')) {
                 continue;
             }
@@ -804,23 +1019,23 @@ async function checkBrowserPermission(cdp) {
             // Check visibility
             if (parent.offsetParent !== null) {
                 foundNode = node;
-                break; 
+                break;
             }
         }
     }
 
     if (foundNode) {
         // Extract clean message
-        const container = foundNode.parentElement.closest('.monaco-dialog-box') || 
-                          foundNode.parentElement.closest('.notification-toast') ||
-                          foundNode.parentElement.closest('div') || 
-                          foundNode.parentElement;
-                          
+        const container = foundNode.parentElement.closest('.monaco-dialog-box') ||
+            foundNode.parentElement.closest('.notification-toast') ||
+            foundNode.parentElement.closest('div') ||
+            foundNode.parentElement;
+
         let message = container.innerText.slice(0, 200).replace(/\\n/g, ' ').trim();
-        
+
         return {
             hasPermissionDialog: true,
-            hasAllowButton: false, 
+            hasAllowButton: false,
             hasDenyButton: false,
             message: message || 'Browser permission required'
         };
@@ -847,13 +1062,163 @@ async function checkBrowserPermission(cdp) {
     return { hasPermissionDialog: false };
 }
 
+// Check for tool permission dialogs (Allow directory access, Allow command, etc.)
+async function checkToolPermission(cdp) {
+    const CHECK_SCRIPT = `(() => {
+    const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
+
+    // Find "Allow ... ?" or "Allow directory access" text
+    const allEls = [...scope.querySelectorAll('p, span, div')];
+    const promptEl = allEls.find(el => {
+        const text = (el.textContent || '').trim();
+        return (text.includes('Allow') && text.includes('access to') && text.includes('?'))
+            && el.offsetParent !== null
+            && el.children.length < 5;
+    });
+
+    if (!promptEl) return { hasToolPermission: false };
+
+    // Walk up to find button container with Deny / Allow Once / Allow This Conversation
+    let container = promptEl;
+    let denyBtn = null;
+    let allowOnceBtn = null;
+    let allowConvBtn = null;
+
+    for (let i = 0; i < 8; i++) {
+        container = container.parentElement;
+        if (!container) break;
+
+        const btns = [...container.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+
+        denyBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'deny');
+        allowOnceBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow once');
+        allowConvBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow this conversation');
+
+        if (denyBtn || allowOnceBtn || allowConvBtn) break;
+    }
+
+    if (!denyBtn && !allowOnceBtn && !allowConvBtn) return { hasToolPermission: false };
+
+    return {
+        hasToolPermission: true,
+        hasDenyButton: !!denyBtn,
+        hasAllowOnceButton: !!allowOnceBtn,
+        hasAllowConversationButton: !!allowConvBtn,
+        message: promptEl.textContent?.trim().slice(0, 200) || 'Tool permission required'
+    };
+})()`;
+
+    const contexts = cdp.getContexts();
+    for (const ctx of contexts) {
+        try {
+            const result = await cdp.call("Runtime.evaluate", {
+                expression: CHECK_SCRIPT,
+                returnByValue: true,
+                contextId: ctx.id
+            });
+
+            if (result.result && result.result.value && result.result.value.hasToolPermission) {
+                return result.result.value;
+            }
+        } catch (e) { }
+    }
+
+    return { hasToolPermission: false };
+}
+
+// Click Allow Once / Allow This Conversation / Deny in tool permission dialog
+async function clickToolPermission(cdp, action) {
+    // action: 'allow_once', 'allow_conversation', 'deny'
+    const CLICK_SCRIPT = `(async () => {
+    const actionType = "${action}";
+    const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
+
+    // Find the permission prompt first
+    const allEls = [...scope.querySelectorAll('p, span, div')];
+    const promptEl = allEls.find(el => {
+        const text = (el.textContent || '').trim();
+        return (text.includes('Allow') && text.includes('access to') && text.includes('?'))
+            && el.offsetParent !== null
+            && el.children.length < 5;
+    });
+
+    let targetBtn = null;
+
+    if (promptEl) {
+        // Walk up to find buttons
+        let container = promptEl;
+        for (let i = 0; i < 8; i++) {
+            container = container.parentElement;
+            if (!container) break;
+
+            const btns = [...container.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+
+            if (actionType === 'allow_once') {
+                targetBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow once');
+            } else if (actionType === 'allow_conversation') {
+                targetBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow this conversation');
+            } else {
+                targetBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'deny');
+            }
+
+            if (targetBtn) break;
+        }
+    }
+
+    // Fallback: search all buttons on page
+    if (!targetBtn) {
+        const allBtns = [...scope.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+        if (actionType === 'allow_once') {
+            targetBtn = allBtns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow once');
+        } else if (actionType === 'allow_conversation') {
+            targetBtn = allBtns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow this conversation');
+        } else {
+            targetBtn = allBtns.find(b => (b.textContent || '').trim().toLowerCase() === 'deny');
+        }
+    }
+
+    if (!targetBtn) {
+        return { ok: false, reason: 'button_not_found', action: actionType };
+    }
+
+    targetBtn.click();
+
+    return {
+        ok: true,
+        method: 'button_click',
+        action: actionType,
+        buttonText: targetBtn.textContent?.slice(0, 50)
+    };
+})()`;
+
+    const contexts = cdp.getContexts();
+    for (const ctx of contexts) {
+        try {
+            const result = await cdp.call("Runtime.evaluate", {
+                expression: CLICK_SCRIPT,
+                returnByValue: true,
+                awaitPromise: true,
+                contextId: ctx.id
+            });
+
+            if (result.result && result.result.value) {
+                return result.result.value;
+            }
+        } catch (e) { }
+    }
+
+    return { ok: false, reason: "no_context" };
+}
+
 // Click Confirm or Deny button in step confirmation
 async function clickConfirmation(cdp, action) {
     const CLICK_SCRIPT = `(async () => {
     const actionType = "${action}";
 
     // Find button by text content
-    let targetBtn = [...document.querySelectorAll('#cascade button')].find(btn => {
+    const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
+
+    let targetBtn = [...scope.querySelectorAll('button')].find(btn => {
         const text = btn.textContent?.toLowerCase() || '';
         if (actionType === 'confirm') {
             return text.includes('confirm') && btn.offsetParent !== null;
@@ -898,6 +1263,116 @@ async function clickConfirmation(cdp, action) {
     return { ok: false, reason: "no_context" };
 }
 
+// Click an element on the Antigravity desktop via CDP
+async function clickElementCDP(cdp, { text, tag, selector }) {
+    const CLICK_SCRIPT = `(() => {
+        const textToFind = ${JSON.stringify(text || '')};
+        const selectorToFind = ${JSON.stringify(selector || '')};
+
+        function isVisible(el) {
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 &&
+                   window.getComputedStyle(el).visibility !== 'hidden';
+        }
+
+        function doClick(el) {
+            const rect = el.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const opts = { bubbles: true, cancelable: true, view: window,
+                           clientX: cx, clientY: cy, screenX: cx, screenY: cy };
+            el.dispatchEvent(new PointerEvent('pointerdown', opts));
+            el.dispatchEvent(new MouseEvent('mousedown', opts));
+            el.dispatchEvent(new PointerEvent('pointerup', opts));
+            el.dispatchEvent(new MouseEvent('mouseup', opts));
+            el.dispatchEvent(new MouseEvent('click', opts));
+        }
+
+        // Strategy 1: CSS selector
+        if (selectorToFind) {
+            const el = document.querySelector(selectorToFind);
+            if (el && isVisible(el)) {
+                doClick(el);
+                return { success: true, method: 'selector', target: selectorToFind };
+            }
+        }
+
+        // Strategy 2: Text match - prioritize BUTTON/A over DIV
+        if (textToFind) {
+            // First: look inside open popover panels (for dropdown item selection)
+            const panels = document.querySelectorAll('[id^="headlessui-popover-panel"], [id^="headlessui-menu-items"], [role="menu"], [role="listbox"]');
+            for (const panel of panels) {
+                // Find the most specific (leaf) element with matching text inside the panel
+                const panelItems = [...panel.querySelectorAll('div, button, li, a, [role="menuitem"], [role="option"]')];
+                const leafMatch = panelItems.find(el => {
+                    const elText = (el.innerText || el.textContent || '').trim();
+                    // Must be exact match AND be a leaf-ish element (no child with same text)
+                    if (elText !== textToFind || !isVisible(el)) return false;
+                    // Prefer elements without children that also have the same text (leaf nodes)
+                    const childWithSameText = [...el.children].find(c => (c.innerText || c.textContent || '').trim() === textToFind);
+                    return !childWithSameText;
+                });
+                if (leafMatch) {
+                    doClick(leafMatch);
+                    return { success: true, method: 'panel_item', target: textToFind };
+                }
+            }
+
+            // Second: find buttons/interactive elements with exact text (outside panels)
+            const interactiveEls = [...document.querySelectorAll('button, a, [role="button"], [role="menuitem"]')];
+            const btnMatch = interactiveEls.find(el =>
+                (el.innerText || el.textContent || '').trim() === textToFind && isVisible(el)
+            );
+            if (btnMatch) {
+                doClick(btnMatch);
+                return { success: true, method: 'button', target: textToFind };
+            }
+
+            // Third: any visible element with exact text match (prefer smallest/leaf)
+            const all = [...document.querySelectorAll('*')].filter(el =>
+                (el.innerText || el.textContent || '').trim() === textToFind && isVisible(el)
+            );
+            // Sort by DOM depth (deepest = most specific) and prefer interactive tags
+            all.sort((a, b) => {
+                const aDepth = getDepth(a);
+                const bDepth = getDepth(b);
+                const aInteractive = ['BUTTON', 'A'].includes(a.tagName) || a.getAttribute('role') === 'button';
+                const bInteractive = ['BUTTON', 'A'].includes(b.tagName) || b.getAttribute('role') === 'button';
+                if (aInteractive !== bInteractive) return bInteractive ? 1 : -1;
+                return bDepth - aDepth;
+            });
+
+            function getDepth(el) {
+                let depth = 0;
+                let node = el;
+                while (node.parentElement) { depth++; node = node.parentElement; }
+                return depth;
+            }
+
+            if (all.length > 0) {
+                doClick(all[0]);
+                return { success: true, method: 'text_leaf', target: textToFind };
+            }
+        }
+
+        return { success: false, error: 'No element found' };
+    })()`;
+
+    const contexts = cdp.getContexts();
+    for (const ctx of contexts) {
+        try {
+            const result = await cdp.call("Runtime.evaluate", {
+                expression: CLICK_SCRIPT,
+                returnByValue: true,
+                contextId: ctx.id
+            });
+            const val = result.result?.value;
+            if (val && val.success) return val;
+        } catch (e) { }
+    }
+    return { success: false, error: 'No matching context' };
+}
+
 // Simple hash function
 function hashString(str) {
     let hash = 0;
@@ -924,7 +1399,11 @@ async function initCDP() {
 
             console.log('🔌 Connecting to CDP...');
             cdpConnection = await connectCDP(cdpInfo.url);
+            activeTargetId = cdpInfo.id || null;
             console.log(`✅ Connected! Found ${cdpConnection.getContexts().length} execution contexts\n`);
+
+            // Pre-discover all instances
+            try { discoveredInstances = await discoverAllTargets(); } catch (e) { }
 
             cdpRetryCount = 0; // Reset on success
             snapshotFailCount = 0;
@@ -959,6 +1438,10 @@ async function startPolling(wss) {
             } else if (snapshot.error) {
                 snapshotFailCount++;
                 console.log(`⚠️ Snapshot error: ${snapshot.error} (fail #${snapshotFailCount})`);
+                if (snapshot.debug) {
+                    console.log(`   - Debug Context: ${snapshot.debug.url} `);
+                    console.log(`   - Debug Snippet: ${snapshot.debug.bodySnippet}...`);
+                }
             } else {
                 snapshotFailCount = 0; // Reset on success
                 const hash = hashString(snapshot.html);
@@ -1195,41 +1678,769 @@ async function createServer() {
         }
     });
 
-    // Model selection endpoint (placeholder)
-    app.post('/set-model', async (req, res) => {
-        const { model } = req.body;
+    // Probe all contexts for controls (debug)
+    app.get('/probe-controls', async (req, res) => {
+        if (!cdpConnection) return res.status(503).json({ error: 'CDP not connected' });
 
-        console.log(`🤖 Attempting to set model: ${model}`);
+        const PROBE = `(() => {
+            const allBtns = [...document.querySelectorAll('button, [role="button"], [id^="headlessui"]')];
+            const visibleBtns = allBtns.filter(b => b.offsetParent !== null);
+            const panels = [...document.querySelectorAll('[id^="headlessui-popover-panel"], [id^="headlessui-menu-items"], [role="menu"], [role="listbox"]')];
 
-        // TODO: Implement CDP model switching
-        // This requires finding the model dropdown and clicking the option
+            // Also look for model/mode text in the footer area
+            const footer = document.querySelector('.flex.items-center.gap-2, [class*="footer"], [class*="status"]');
 
-        console.warn('⚠️ Model switching not yet implemented');
+            return {
+                url: window.location.href,
+                buttonCount: visibleBtns.length,
+                buttons: visibleBtns.slice(0, 30).map(b => ({
+                    tag: b.tagName,
+                    id: b.id || '',
+                    className: (b.className || '').substring(0, 80),
+                    text: (b.innerText || b.textContent || '').trim().substring(0, 80),
+                    role: b.getAttribute('role') || ''
+                })),
+                panelCount: panels.length,
+                hasConversation: !!document.getElementById('conversation'),
+                hasCascade: !!document.getElementById('cascade'),
+                bodySnippet: document.body.innerText.substring(0, 500)
+            };
+        })()`;
 
-        res.json({
-            success: false,
-            reason: 'not_implemented',
-            currentModel: model,
-            message: 'Model switching not yet implemented'
-        });
+        const contexts = cdpConnection.getContexts();
+        const results = [];
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: PROBE,
+                    returnByValue: true,
+                    contextId: ctx.id
+                });
+                if (result.result?.value) {
+                    results.push({ contextId: ctx.id, contextName: ctx.name, ...result.result.value });
+                }
+            } catch (e) {
+                results.push({ contextId: ctx.id, error: e.message });
+            }
+        }
+        res.json(results);
     });
 
-    // Mode selection endpoint (placeholder)
-    app.post('/set-mode', async (req, res) => {
-        const { mode } = req.body;
+    // --- Instance Management (CDP targets) ---
 
-        console.log(`⚙️ Attempting to set mode: ${mode}`);
+    // List all discovered Antigravity instances (CDP targets)
+    app.get('/instances', async (req, res) => {
+        try {
+            discoveredInstances = await discoverAllTargets();
+            res.json({
+                activeTargetId,
+                instances: discoveredInstances.map(i => ({
+                    id: i.id,
+                    port: i.port,
+                    title: i.title,
+                    pageUrl: i.pageUrl,
+                    isActive: i.id === activeTargetId
+                }))
+            });
+        } catch (e) {
+            console.error('Instance discovery error:', e);
+            res.status(500).json({ error: e.message });
+        }
+    });
 
-        // TODO: Implement CDP mode switching
+    // Switch active CDP connection to a different target
+    app.post('/instance', async (req, res) => {
+        const { targetId } = req.body;
+        if (!targetId) return res.status(400).json({ error: 'targetId required' });
 
-        console.warn('⚠️ Mode switching not yet implemented');
+        try {
+            if (discoveredInstances.length === 0) {
+                discoveredInstances = await discoverAllTargets();
+            }
+            const target = discoveredInstances.find(i => i.id === targetId);
+            if (!target) {
+                return res.status(404).json({ error: 'Target not found' });
+            }
 
-        res.json({
-            success: false,
-            reason: 'not_implemented',
-            currentMode: mode,
-            message: 'Mode switching not yet implemented'
+            // Close existing CDP connection
+            if (cdpConnection && cdpConnection.ws) {
+                try { cdpConnection.ws.close(); } catch (e) { }
+            }
+            cdpConnection = null;
+            lastSnapshot = null;
+            lastSnapshotHash = null;
+
+            // Connect to new target
+            console.log(`Switching to instance: ${target.title} (${target.id})`);
+            cdpConnection = await connectCDP(target.url);
+            activeTargetId = target.id;
+            snapshotFailCount = 0;
+            cdpRetryCount = 0;
+
+            console.log(`Switched to: ${target.title}`);
+            res.json({ success: true, activeTargetId, title: target.title });
+        } catch (e) {
+            console.error('Instance switch error:', e);
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // --- Chat Session Navigation ---
+
+    // Get list of recent chat sessions from Antigravity sidebar
+    app.get('/sessions', async (req, res) => {
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        const SESSIONS_SCRIPT = `(() => {
+            // ===== Quick-Input Dialog Detection =====
+            // Antigravity shows sessions in a quick-input dialog with:
+            // - Section headers: div.text-quickinput-foreground.text-xs.opacity-50 ("Recent in ...", "Other Conversations")
+            // - Session items: div.px-2.5.cursor-pointer.rounded-md.text-quickinput-foreground (NOT pb-1.5)
+            // - Show more btns: div.text-quickinput-foreground.text-sm.px-2.5.pb-1.5.cursor-pointer ("Show N more...")
+
+            const sections = [];
+            let currentSection = { header: '', sessions: [], showMore: null };
+
+            // Strategy A: Quick-input dialog structure (primary)
+            // Find all text-quickinput-foreground elements to understand the layout
+            const qiElements = [...document.querySelectorAll('[class*="text-quickinput-foreground"]')].filter(el => {
+                return el.offsetParent !== null;
+            });
+
+            if (qiElements.length > 0) {
+                // Categorize each element
+                for (const el of qiElements) {
+                    const cls = el.className || '';
+                    const text = (el.innerText || el.textContent || '').trim();
+
+                    // Skip empty
+                    if (!text) continue;
+
+                    // Section header: text-xs + opacity-50 (e.g., "Recent in VIDEO_TRANS", "Other Conversations")
+                    if (cls.includes('text-xs') && cls.includes('opacity-50')) {
+                        // Save previous section if it has sessions
+                        if (currentSection.sessions.length > 0 || currentSection.showMore) {
+                            sections.push(currentSection);
+                        }
+                        currentSection = { header: text, sessions: [], showMore: null };
+                        continue;
+                    }
+
+                    // "Show N more..." button: text-sm + pb-1.5 + cursor-pointer
+                    if (cls.includes('pb-1.5') && cls.includes('cursor-pointer') && text.toLowerCase().includes('more')) {
+                        currentSection.showMore = text;
+                        continue;
+                    }
+
+                    // Session item: cursor-pointer + rounded-md + px-2.5 (but NOT pb-1.5)
+                    if (cls.includes('cursor-pointer') && cls.includes('rounded') && cls.includes('px-2.5') && !cls.includes('pb-1.5')) {
+                        // Extract session name (first span text, not timestamp)
+                        const nameSpan = el.querySelector('span.truncate, span.min-w-0');
+                        let name = '';
+                        if (nameSpan) {
+                            name = (nameSpan.innerText || nameSpan.textContent || '').trim();
+                        }
+                        if (!name) {
+                            // Fallback: get text from first flex child, strip timestamp
+                            const flexChild = el.querySelector('.flex-1, .min-w-0');
+                            if (flexChild) {
+                                name = (flexChild.innerText || flexChild.textContent || '').trim();
+                            }
+                        }
+                        if (!name) {
+                            // Last resort: first line, remove timestamp
+                            const fullText = text;
+                            const lines = fullText.split('\\n').map(l => l.trim()).filter(l => l);
+                            name = lines[0] || '';
+                        }
+                        // Clean: remove trailing timestamps and workspace paths
+                        name = name.replace(/\\d+\\s*(hrs?|hours?|days?|mins?|minutes?|weeks?|secs?|seconds?)\\s*ago$/i, '').trim();
+                        // Remove trailing workspace path like "c:/Users/Admin/Documents/GitHub"
+                        name = name.replace(/\\s*[a-zA-Z]:[\\\\/][\\w\\-\\.\\\\/]+$/g, '').trim();
+                        // Remove trailing bullet
+                        name = name.replace(/\\s*●\\s*$/, '').trim();
+
+                        if (name && name.length > 1 && name.length < 200) {
+                            currentSection.sessions.push({
+                                text: name.substring(0, 120),
+                                section: currentSection.header
+                            });
+                        }
+                        continue;
+                    }
+                }
+                // Push last section
+                if (currentSection.sessions.length > 0 || currentSection.showMore) {
+                    sections.push(currentSection);
+                }
+            }
+
+            // Strategy B: Sidebar button-based sessions (when quick-input not open)
+            const sidebarSessions = [];
+            if (sections.length === 0 || sections.every(s => s.sessions.length === 0)) {
+                // B1: buttons with title attribute
+                const sessionBtnsWithTitle = [...document.querySelectorAll('button[title]')].filter(b => {
+                    const cls = b.className || '';
+                    return cls.includes('cursor-pointer') && cls.includes('group') &&
+                           b.title && b.title.length > 0 && b.offsetParent !== null;
+                });
+
+                // B2: buttons by class pattern (no title attr)
+                const sessionBtnsByClass = [...document.querySelectorAll('button')].filter(b => {
+                    const cls = b.className || '';
+                    if (!cls.includes('cursor-pointer') || !cls.includes('group')) return false;
+                    if (!cls.includes('grow') && !cls.includes('flex-row')) return false;
+                    if (!b.offsetParent) return false;
+                    const text = (b.innerText || b.textContent || '').trim();
+                    if (!text || text.length < 2 || text.length > 200) return false;
+                    if (text === 'Send' || text === 'Planning' || text === 'Fast' || text === 'Agent') return false;
+                    return true;
+                });
+
+                const sessionBtns = sessionBtnsWithTitle.length > 0 ? sessionBtnsWithTitle : sessionBtnsByClass;
+                const useTitle = sessionBtnsWithTitle.length > 0;
+
+                sessionBtns.forEach((btn, idx) => {
+                    let name = useTitle && btn.title ? btn.title.trim() : (btn.innerText || btn.textContent || '').trim().split('\\n')[0].trim();
+                    if (name && name.length > 1) {
+                        sidebarSessions.push({ text: name.substring(0, 120), section: '' });
+                    }
+                });
+            }
+
+            // Build flat sessions list with section info
+            const allSessions = [];
+            const seen = new Set();
+
+            if (sections.length > 0) {
+                for (const sec of sections) {
+                    for (const s of sec.sessions) {
+                        if (!seen.has(s.text)) {
+                            seen.add(s.text);
+                            allSessions.push(s);
+                        }
+                    }
+                }
+            } else {
+                for (const s of sidebarSessions) {
+                    if (!seen.has(s.text)) {
+                        seen.add(s.text);
+                        allSessions.push(s);
+                    }
+                }
+            }
+
+            // Check for "See all" link (sidebar view only)
+            const seeAllBtn = [...document.querySelectorAll('div, a, button, span')].find(el => {
+                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                return text === 'see all' && el.offsetParent !== null;
+            });
+
+            // Detect view type
+            const isQuickInput = sections.length > 0 && sections.some(s => s.sessions.length > 0);
+
+            return {
+                hasSeeAll: !!seeAllBtn && !isQuickInput,
+                isExpanded: isQuickInput,
+                sessionCount: allSessions.length,
+                sessions: allSessions.slice(0, 50),
+                sections: sections.map(s => ({
+                    header: s.header,
+                    count: s.sessions.length,
+                    showMore: s.showMore
+                }))
+            };
+        })()`;
+
+        const contexts = cdpConnection.getContexts();
+        let bestResult = { sessionCount: 0, sessions: [], sections: [] };
+
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: SESSIONS_SCRIPT,
+                    returnByValue: true,
+                    contextId: ctx.id
+                });
+                if (result.result?.value) {
+                    const val = result.result.value;
+                    if (val.sessionCount > bestResult.sessionCount) {
+                        bestResult = val;
+                    }
+                }
+            } catch (e) { }
+        }
+
+        res.json(bestResult);
+    });
+
+    // Click a specific chat session by its title text
+    app.post('/session-click', async (req, res) => {
+        const { title } = req.body;
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+        if (!title) {
+            return res.status(400).json({ error: 'title required' });
+        }
+
+        const CLICK_SESSION_SCRIPT = `(async () => {
+            const targetTitle = ${JSON.stringify(title)};
+
+            function doClick(el) {
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, view: window,
+                               clientX: cx, clientY: cy, screenX: cx, screenY: cy };
+                el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                el.dispatchEvent(new PointerEvent('pointerup', opts));
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                el.dispatchEvent(new MouseEvent('click', opts));
+            }
+
+            // Auto-dismiss "Select where to open" quick-input dialog
+            async function dismissQuickInput() {
+                const delays = [300, 500, 800];
+                for (const delay of delays) {
+                    await new Promise(r => setTimeout(r, delay));
+                    const widget = document.querySelector('.quick-input-widget');
+                    if (!widget || widget.style.display === 'none') continue;
+
+                    const items = widget.querySelectorAll('.quick-input-list [role="option"], .quick-input-list li, .quick-input-list a');
+                    for (const item of items) {
+                        const text = (item.innerText || item.textContent || '').trim();
+                        if (text.includes('Open in current window')) {
+                            doClick(item);
+                            return 'auto_opened';
+                        }
+                    }
+
+                    const focused = widget.querySelector('[aria-selected="true"], .focused, .monaco-list-row:first-child');
+                    if (focused) {
+                        doClick(focused);
+                        return 'auto_first';
+                    }
+                }
+                return null;
+            }
+
+            let clicked = false;
+            let method = '';
+
+            // Strategy 1: Quick-input dialog session items (text-quickinput-foreground + cursor-pointer + rounded)
+            const qiSessions = [...document.querySelectorAll('[class*="text-quickinput-foreground"]')].filter(el => {
+                const cls = el.className || '';
+                return cls.includes('cursor-pointer') && cls.includes('rounded') &&
+                       cls.includes('px-2.5') && !cls.includes('pb-1.5') &&
+                       el.offsetParent !== null;
+            });
+            for (const el of qiSessions) {
+                // Extract clean name (same logic as /sessions)
+                const nameSpan = el.querySelector('span.truncate, span.min-w-0');
+                let name = '';
+                if (nameSpan) {
+                    name = (nameSpan.innerText || nameSpan.textContent || '').trim();
+                }
+                if (!name) {
+                    const flexChild = el.querySelector('.flex-1, .min-w-0');
+                    if (flexChild) name = (flexChild.innerText || flexChild.textContent || '').trim();
+                }
+                if (!name) {
+                    name = (el.innerText || el.textContent || '').trim().split('\\n')[0].trim();
+                }
+                name = name.replace(/\\d+\\s*(hrs?|hours?|days?|mins?|minutes?|weeks?|secs?|seconds?)\\s*ago$/i, '').trim();
+                name = name.replace(/\\s*[a-zA-Z]:[\\\\/][\\w\\-\\.\\\\/]+$/g, '').trim();
+                name = name.replace(/\\s*●\\s*$/, '').trim();
+
+                if (name === targetTitle) {
+                    doClick(el);
+                    clicked = true;
+                    method = 'quickinput_match';
+                    break;
+                }
+            }
+            // Strategy 1b: fuzzy match in quick-input (startsWith)
+            if (!clicked) {
+                for (const el of qiSessions) {
+                    const fullText = (el.innerText || el.textContent || '').trim();
+                    if (fullText.startsWith(targetTitle) || targetTitle.startsWith(fullText.split('\\n')[0].trim())) {
+                        doClick(el);
+                        clicked = true;
+                        method = 'quickinput_fuzzy';
+                        break;
+                    }
+                }
+            }
+
+            // Strategy 2: Sidebar button with title attribute
+            if (!clicked) {
+                const sessionBtn = [...document.querySelectorAll('button[title]')].find(b => {
+                    return b.title.trim() === targetTitle && b.offsetParent !== null;
+                });
+                if (sessionBtn) {
+                    doClick(sessionBtn);
+                    clicked = true;
+                    method = 'title_match';
+                }
+            }
+
+            // Strategy 3: Sidebar button by class pattern + text content
+            if (!clicked) {
+                const classBtns = [...document.querySelectorAll('button')].filter(b => {
+                    const cls = b.className || '';
+                    return cls.includes('cursor-pointer') && cls.includes('group') &&
+                           (cls.includes('grow') || cls.includes('flex-row')) &&
+                           b.offsetParent !== null;
+                });
+                for (const btn of classBtns) {
+                    const firstLine = (btn.innerText || btn.textContent || '').trim().split('\\n')[0].trim();
+                    if (firstLine === targetTitle) {
+                        doClick(btn);
+                        clicked = true;
+                        method = 'sidebar_class';
+                        break;
+                    }
+                }
+            }
+
+            // Strategy 4: Any clickable element with exact text match
+            if (!clicked) {
+                const anyMatch = [...document.querySelectorAll('button, a, [role="button"], .cursor-pointer')].find(el => {
+                    const text = (el.innerText || el.textContent || '').trim();
+                    return text === targetTitle && el.offsetParent !== null;
+                });
+                if (anyMatch) {
+                    doClick(anyMatch);
+                    clicked = true;
+                    method = 'any_match';
+                }
+            }
+
+            if (!clicked) {
+                return { success: false, error: 'Session not found: ' + targetTitle };
+            }
+
+            // After clicking session from "Other Conversations", auto-dismiss workspace picker
+            const quickInputResult = await dismissQuickInput();
+
+            return {
+                success: true,
+                method: method,
+                target: targetTitle,
+                quickInput: quickInputResult
+            };
+        })()`;
+
+        const contexts = cdpConnection.getContexts();
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: CLICK_SESSION_SCRIPT,
+                    returnByValue: true,
+                    awaitPromise: true,
+                    contextId: ctx.id
+                });
+                const val = result.result?.value;
+                if (val && val.success) {
+                    return res.json(val);
+                }
+            } catch (e) { }
+        }
+        res.json({ success: false, error: 'Session not found in any context' });
+    });
+
+    // Start a new conversation (Ctrl+Shift+L)
+    app.post('/new-conversation', async (req, res) => {
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        const NEW_CONV_SCRIPT = `(() => {
+            function doClick(el) {
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, view: window,
+                               clientX: cx, clientY: cy, screenX: cx, screenY: cy };
+                el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                el.dispatchEvent(new PointerEvent('pointerup', opts));
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                el.dispatchEvent(new MouseEvent('click', opts));
+            }
+
+            // Strategy 1: Find the "new conversation" button by tooltip/aria-label
+            const newBtn = [...document.querySelectorAll('button, a')].find(b => {
+                const tooltip = b.getAttribute('data-tooltip-content') || b.getAttribute('aria-label') || b.title || '';
+                const text = (b.innerText || b.textContent || '').trim().toLowerCase();
+                return (tooltip.toLowerCase().includes('new conversation') ||
+                        tooltip.toLowerCase().includes('start a new') ||
+                        text.includes('new conversation')) &&
+                       b.offsetParent !== null;
+            });
+
+            if (newBtn) {
+                doClick(newBtn);
+                return { success: true, method: 'button_click' };
+            }
+
+            // Strategy 2: Dispatch Ctrl+Shift+L keyboard shortcut
+            const target = document.activeElement || document.body;
+            target.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'l', code: 'KeyL', keyCode: 76, which: 76,
+                ctrlKey: true, shiftKey: true,
+                bubbles: true, cancelable: true
+            }));
+            target.dispatchEvent(new KeyboardEvent('keyup', {
+                key: 'l', code: 'KeyL', keyCode: 76, which: 76,
+                ctrlKey: true, shiftKey: true,
+                bubbles: true, cancelable: true
+            }));
+
+            return { success: true, method: 'keyboard_shortcut' };
+        })()`;
+
+        const contexts = cdpConnection.getContexts();
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: NEW_CONV_SCRIPT,
+                    returnByValue: true,
+                    contextId: ctx.id
+                });
+                const val = result.result?.value;
+                if (val && val.success) {
+                    return res.json(val);
+                }
+            } catch (e) { }
+        }
+        res.json({ success: false, error: 'Could not create new conversation' });
+    });
+
+    // Click "See all" to expand session list
+    app.post('/sessions-see-all', async (req, res) => {
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        const SEE_ALL_SCRIPT = `(() => {
+            function doClick(el) {
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, view: window,
+                               clientX: cx, clientY: cy, screenX: cx, screenY: cy };
+                el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                el.dispatchEvent(new PointerEvent('pointerup', opts));
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                el.dispatchEvent(new MouseEvent('click', opts));
+            }
+
+            const seeAll = [...document.querySelectorAll('div, a, button, span')].find(el => {
+                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                return text === 'see all' && el.offsetParent !== null;
+            });
+
+            if (seeAll) {
+                doClick(seeAll);
+                return { success: true };
+            }
+            return { success: false, error: 'See all button not found' };
+        })()`;
+
+        const contexts = cdpConnection.getContexts();
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: SEE_ALL_SCRIPT,
+                    returnByValue: true,
+                    contextId: ctx.id
+                });
+                const val = result.result?.value;
+                if (val && val.success) {
+                    return res.json(val);
+                }
+            } catch (e) { }
+        }
+        res.json({ success: false, error: 'See all not found in any context' });
+    });
+
+    // Click "Show N more..." button in quick-input dialog
+    app.post('/sessions-show-more', async (req, res) => {
+        const { section } = req.body; // "recent" or "other" to target specific section
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        const SHOW_MORE_SCRIPT = `(async () => {
+            const targetSection = ${JSON.stringify(section || '')}.toLowerCase();
+
+            function doClick(el) {
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const opts = { bubbles: true, cancelable: true, view: window,
+                               clientX: cx, clientY: cy, screenX: cx, screenY: cy };
+                el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                el.dispatchEvent(new PointerEvent('pointerup', opts));
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                el.dispatchEvent(new MouseEvent('click', opts));
+            }
+
+            // Find "Show N more..." buttons: text-quickinput-foreground + pb-1.5 + cursor-pointer
+            const showMoreBtns = [...document.querySelectorAll('[class*="text-quickinput-foreground"]')].filter(el => {
+                const cls = el.className || '';
+                const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                return cls.includes('pb-1.5') && cls.includes('cursor-pointer') &&
+                       text.includes('more') && el.offsetParent !== null;
+            });
+
+            if (showMoreBtns.length === 0) {
+                return { success: false, error: 'No "Show more" buttons found' };
+            }
+
+            // If section specified, try to find the right one
+            let target = showMoreBtns[0]; // default: first one (Recent)
+            if (targetSection === 'other' && showMoreBtns.length > 1) {
+                target = showMoreBtns[1]; // second one = Other Conversations
+            } else if (targetSection === 'recent') {
+                target = showMoreBtns[0];
+            }
+
+            const btnText = (target.innerText || target.textContent || '').trim();
+            doClick(target);
+
+            // Wait for the list to expand
+            await new Promise(r => setTimeout(r, 500));
+
+            return { success: true, clicked: btnText };
+        })()`;
+
+        const contexts = cdpConnection.getContexts();
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: SHOW_MORE_SCRIPT,
+                    returnByValue: true,
+                    awaitPromise: true,
+                    contextId: ctx.id
+                });
+                const val = result.result?.value;
+                if (val && val.success) {
+                    return res.json(val);
+                }
+            } catch (e) { }
+        }
+        res.json({ success: false, error: 'Show more not found in any context' });
+    });
+
+    // --- Click Element (for Model/Mode selection) ---
+
+    // Click an element on the Antigravity desktop
+    app.post('/click', async (req, res) => {
+        const { text, tag, selector } = req.body;
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        try {
+            const result = await clickElementCDP(cdpConnection, { text, tag, selector });
+            res.json(result);
+        } catch (e) {
+            console.error('Click error:', e);
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // --- Controls HTML (for Model/Mode detection) ---
+
+    // Get full body HTML for frontend to parse model/mode buttons
+    app.get('/controls', async (req, res) => {
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        const CONTROLS_SCRIPT = `(() => {
+            // Extract only buttons and relevant controls to reduce payload
+            const btns = [...document.querySelectorAll('button, [role="button"], [id^="headlessui"]')];
+            const panels = [...document.querySelectorAll('[id^="headlessui-popover-panel"], [id^="headlessui-menu-items"], [id^="headlessui-listbox-options"], [role="menu"], [role="listbox"], [role="dialog"], .fixed[class*="bg-"], .absolute[class*="border"]')];
+
+            const buttons = btns.map(b => ({
+                tag: b.tagName,
+                id: b.id || '',
+                text: (b.innerText || b.textContent || '').trim().substring(0, 100),
+                role: b.getAttribute('role') || '',
+                visible: b.offsetParent !== null
+            })).filter(b => b.visible && b.text);
+
+            const openPanels = panels.filter(p => {
+                // EXCLUDE quick-input-widget panels (session picker, workspace picker)
+                // These are NOT model/mode dropdowns
+                if (p.closest('.quick-input-widget')) return false;
+                const cls = p.className || '';
+                if (cls.includes('quick-input') || cls.includes('quickinput')) return false;
+                // Exclude panels that contain workspace/path-like items
+                const text = (p.innerText || '').toLowerCase();
+                if (text.includes('open in workspace') || text.includes('open in current window')) return false;
+                if (text.includes('select where to open') || text.includes('select a conversation')) return false;
+                return true;
+            }).map(p => {
+                const items = [...p.querySelectorAll('button, [role="menuitem"], [role="option"], li, .cursor-pointer, a')];
+                return {
+                    id: p.id || '',
+                    role: p.getAttribute('role') || '',
+                    items: items.map(i => {
+                        // Prefer .font-medium child (title without description)
+                        const fm = i.querySelector('.font-medium');
+                        let text = fm ? fm.textContent.trim()
+                                      : (i.innerText || i.textContent || '').trim();
+                        // If text has multiple lines, take only the first line (strip descriptions)
+                        const firstLine = text.split('\\n')[0].trim();
+                        return { text: firstLine.substring(0, 100), tag: i.tagName, fullText: text.substring(0, 200) };
+                    }).filter(i => i.text)
+                };
+            }).filter(p => p.items.length > 0);
+
+            return { buttons, openPanels };
+        })()`;
+
+        // Scan ALL contexts and merge results - prioritize cascade-panel context
+        // (model/mode buttons live in cascade-panel, not in workbench)
+        const contexts = cdpConnection.getContexts();
+        let allButtons = [];
+        let allPanels = [];
+
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpConnection.call("Runtime.evaluate", {
+                    expression: CONTROLS_SCRIPT,
+                    returnByValue: true,
+                    contextId: ctx.id
+                });
+                if (result.result?.value) {
+                    const val = result.result.value;
+                    if (val.buttons) allButtons.push(...val.buttons);
+                    if (val.openPanels) allPanels.push(...val.openPanels);
+                }
+            } catch (e) { }
+        }
+
+        // Deduplicate buttons by text+id combo
+        const seen = new Set();
+        allButtons = allButtons.filter(b => {
+            const key = `${b.id}|${b.text}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
         });
+
+        res.json({ buttons: allButtons, openPanels: allPanels });
     });
 
     // Check for pending actions requiring approval
@@ -1290,16 +2501,18 @@ async function createServer() {
         }
 
         try {
-            const [commandApproval, stepConfirmation, browserPermission] = await Promise.all([
+            const [commandApproval, stepConfirmation, browserPermission, toolPermission] = await Promise.all([
                 checkPendingAction(cdpConnection),
                 checkStepConfirmation(cdpConnection),
-                checkBrowserPermission(cdpConnection)
+                checkBrowserPermission(cdpConnection),
+                checkToolPermission(cdpConnection)
             ]);
 
             res.json({
                 commandApproval,
                 stepConfirmation,
-                browserPermission
+                browserPermission,
+                toolPermission
             });
         } catch (err) {
             console.error('Error checking popups:', err);
@@ -1327,6 +2540,31 @@ async function createServer() {
             res.json(result);
         } catch (err) {
             console.error(`Confirmation ${action} error:`, err);
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    // Click tool permission button (Allow Once / Allow This Conversation / Deny)
+    app.post('/click-tool-permission', async (req, res) => {
+        const { action } = req.body; // 'allow_once', 'allow_conversation', 'deny'
+
+        console.log(`🔐 Tool permission ${action} requested`);
+
+        if (!cdpConnection) {
+            return res.status(503).json({ error: 'CDP not connected' });
+        }
+
+        const validActions = ['allow_once', 'allow_conversation', 'deny'];
+        if (!action || !validActions.includes(action.toLowerCase())) {
+            return res.status(400).json({ error: 'Action must be "allow_once", "allow_conversation", or "deny"' });
+        }
+
+        try {
+            const result = await clickToolPermission(cdpConnection, action.toLowerCase());
+            console.log(`Tool permission ${action} result:`, result);
+            res.json(result);
+        } catch (err) {
+            console.error(`Tool permission ${action} error:`, err);
             res.status(500).json({ success: false, error: err.message });
         }
     });
@@ -1409,17 +2647,19 @@ async function main() {
             process.exit(0);
         });
 
-        await initCDP();
-
+        // Start Express server FIRST (so mobile UI is always accessible)
         const { server, wss } = await createServer();
-
-        // Start background polling
-        startPolling(wss);
 
         const PORT = process.env.PORT || 3000;
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
             console.log(`📱 Access from mobile: http://<your-ip>:${PORT}`);
+        });
+
+        // Connect CDP in background (don't block server startup)
+        initCDP().then(() => {
+            // Start background polling once CDP is connected
+            startPolling(wss);
         });
     } catch (err) {
         console.error('❌ Fatal error:', err.message);

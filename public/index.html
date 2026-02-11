@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#0a0a0a">
     <title>AgentG - Mobile Monitor</title>
     <link rel="stylesheet" href="style.css">
@@ -21,6 +21,7 @@
                 </div>
             </div>
             <div class="header-right">
+                <button class="header-btn" id="instanceBtn" aria-label="Switch session" title="Switch session">&#8645;</button>
                 <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
                     <span id="themeIcon">🌙</span>
                 </button>
@@ -55,6 +56,10 @@
 
         <!-- Input Section -->
         <div class="input-section">
+            <div class="controls-row" id="controlsRow">
+                <button class="control-chip" id="modeChip" title="Current mode">--</button>
+                <button class="control-chip" id="modelChip" title="Current model">--</button>
+            </div>
             <div class="file-preview-area hidden" id="filePreviewArea"></div>
             <div class="input-row">
                 <button class="toolbar-btn" id="attachBtn" aria-label="Attach file" title="Add files">📎</button>
@@ -133,6 +138,31 @@
         </div>
     </div>
 
+    <!-- Tool Permission Popup -->
+    <div class="modal-overlay" id="toolPermissionPopup">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">🔐 Permission Request</h2>
+            </div>
+            <div class="modal-body">
+                <p id="toolPermissionMessage" style="font-size: 14px; line-height: 1.5; margin-bottom: 16px;">
+                    Tool permission required
+                </p>
+            </div>
+            <div class="modal-footer" style="padding: 16px; display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap;">
+                <button class="action-btn reject-btn" id="toolDenyBtn" style="width: auto; padding: 8px 16px;">
+                    Deny
+                </button>
+                <button class="action-btn" id="toolAllowOnceBtn" style="width: auto; padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer;">
+                    Allow Once
+                </button>
+                <button class="action-btn accept-btn" id="toolAllowConvBtn" style="width: auto; padding: 8px 16px;">
+                    Allow All
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Mic Setup Modal -->
     <div class="modal-overlay" id="micSetupModal">
         <div class="modal-content">
@@ -171,6 +201,45 @@
         </div>
     </div>
 
+    <!-- Instance Switcher Modal -->
+    <div class="modal-overlay" id="instanceModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Chat Sessions</h2>
+                <button class="modal-close" id="instanceClose" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="option-list" id="instanceList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Model Selection Modal -->
+    <div class="modal-overlay" id="modelModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Select Model</h2>
+                <button class="modal-close" id="modelClose" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="option-list" id="modelList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mode Selection Modal -->
+    <div class="modal-overlay" id="modeModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Select Mode</h2>
+                <button class="modal-close" id="modeClose" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="option-list" id="modeList"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Hidden file input -->
     <input type="file" id="fileInput" multiple accept="*/*" class="hidden">
 
@@ -181,6 +250,8 @@
     <script src="js/fileUpload.js"></script>
     <script src="js/voiceRecorder.js"></script>
     <script src="js/actionManager.js"></script>
+    <script src="js/instanceManager.js"></script>
+    <script src="js/controlsManager.js"></script>
     <script src="js/main.js"></script>
 </body>
 

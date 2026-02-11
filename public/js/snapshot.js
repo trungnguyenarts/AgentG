@@ -52,9 +52,8 @@ class SnapshotManager {
       // Process HTML to show thumbnails for image links
       let processedHtml = data.html;
 
-      // Regex to find image URLs from our upload folder
-      // Matches http://.../uploads/files/xxx.png/jpg/etc
-      const imageUrlRegex = /http[s]?:\/\/[^\s]+?\.(jpg|jpeg|png|gif|webp)/gi;
+      // Regex to find image URLs from our upload folder that aren't already in an img tag
+      const imageUrlRegex = /(?<!src=")(http[s]?:\/\/[^\s]+?\.(jpg|jpeg|png|gif|webp))/gi;
 
       processedHtml = processedHtml.replace(imageUrlRegex, (url) => {
         return `
@@ -76,27 +75,58 @@ class SnapshotManager {
           `;
       });
 
-      // Update content
-      this.chatContent.innerHTML = `
-        <style>
+      // Clear and update content
+      this.chatContent.innerHTML = '';
+
+      const styleEl = document.createElement('style');
+      styleEl.textContent = `
           ${data.css}
           
-          /* Override positioning for snapshot content */
-          #chatContent * {
-            position: static;
+          /* Aggressive font and background override */
+          #agentg-chat-content, 
+          #agentg-chat-content *,
+          #agentg-chat-content [style*="font-family"] {
+            font-family: var(--font-sans) !important;
           }
-          #chatContent #cascade {
+
+          #agentg-chat-content {
+            background-color: var(--bg-primary) !important;
+            padding: 12px !important;
+            box-sizing: border-box !important;
+          }
+
+          /* Override positioning for snapshot content */
+          #chatContent #agentg-chat-content {
             position: relative;
+            overflow: visible !important;
+            height: auto !important;
+            display: flex !important;
+            flex-direction: column !important;
+          }
+          /* Let virtualized scroll container flow naturally after placeholders removed */
+          #chatContent [style*="min-height"] {
+            min-height: auto !important;
+          }
+          #chatContent .overflow-hidden {
+            overflow: visible !important;
+          }
+          #chatContent .overflow-clip {
+            overflow: visible !important;
+          }
+          #chatContent .overflow-y-auto {
+            overflow: visible !important;
           }
           
-          /* Fix code blocks */
+          /* Fix code blocks aesthetics */
           pre, code {
             background-color: var(--bg-tertiary) !important;
             color: var(--text-primary) !important;
+            border: 1px solid var(--border-default) !important;
           }
           
           pre code {
             background-color: transparent !important;
+            border: none !important;
           }
 
           /* Thumbnail styles */
@@ -116,9 +146,14 @@ class SnapshotManager {
           .chat-thumbnail:active {
             transform: scale(0.98);
           }
-        </style>
-        ${processedHtml}
       `;
+
+      const contentWrapper = document.createElement('div');
+      contentWrapper.id = 'snapshot-wrapper';
+      contentWrapper.innerHTML = processedHtml;
+
+      this.chatContent.appendChild(styleEl);
+      this.chatContent.appendChild(contentWrapper);
 
       // Restore scroll or go to bottom
       if (isNearBottom || scrollPos === 0) {
