@@ -1,5 +1,6 @@
 // Voice Recorder Manager
 // Press & hold to record, release to stop
+// Real-time waveform visualization via Web Audio API
 
 class VoiceRecorderManager {
     constructor() {
@@ -9,6 +10,7 @@ class VoiceRecorderManager {
         this.voiceCancelBtn = document.getElementById('voiceCancelBtn');
         this.voiceStopBtn = document.getElementById('voiceStopBtn');
         this.voiceSendBtn = document.getElementById('voiceSendBtn');
+        this.waveformCanvas = document.getElementById('waveformCanvas');
 
         // Mic Setup Modal (Fallback)
         this.micSetupModal = document.getElementById('micSetupModal');
@@ -16,6 +18,11 @@ class VoiceRecorderManager {
         this.mediaRecorder = null;
         this.audioChunks = [];
         this.stream = null;
+
+        // Audio analysis
+        this.audioContext = null;
+        this.analyser = null;
+        this.animFrameId = null;
 
         // Timer state
         this.elapsedTime = 0; // Total ms recorded
@@ -103,6 +110,7 @@ class VoiceRecorderManager {
             this.lastResumeTime = Date.now();
             this.showRecordingUI();
             this.startTimer();
+            this.startWaveform();
             this.voiceBtn.classList.add('recording');
 
         } catch (error) {
@@ -112,6 +120,80 @@ class VoiceRecorderManager {
             this.voiceBtn.classList.remove('recording');
         }
     }
+
+    // --- Waveform Visualization ---
+
+    startWaveform() {
+        try {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = this.audioContext.createMediaStreamSource(this.stream);
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = 256;
+            source.connect(this.analyser);
+            this.drawWaveform();
+        } catch (e) {
+            console.warn('Waveform init failed:', e);
+        }
+    }
+
+    drawWaveform() {
+        if (!this.analyser || !this.waveformCanvas) return;
+
+        const canvas = this.waveformCanvas;
+        const ctx = canvas.getContext('2d');
+        const bufferLength = this.analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const draw = () => {
+            this.animFrameId = requestAnimationFrame(draw);
+            this.analyser.getByteFrequencyData(dataArray);
+
+            // Clear
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw bars
+            const barCount = 40;
+            const barWidth = (canvas.width / barCount) - 2;
+            const step = Math.floor(bufferLength / barCount);
+
+            for (let i = 0; i < barCount; i++) {
+                const value = dataArray[i * step] || 0;
+                const barHeight = (value / 255) * (canvas.height * 0.85);
+                const minHeight = 3;
+                const h = Math.max(barHeight, minHeight);
+                const x = i * (barWidth + 2);
+                const y = (canvas.height - h) / 2;
+
+                // Color: accent for active bars, dim for quiet
+                if (this.isPaused) {
+                    ctx.fillStyle = '#f59e0b88';
+                } else {
+                    const intensity = value / 255;
+                    ctx.fillStyle = intensity > 0.3 ? '#ef4444' : '#ef444466';
+                }
+
+                ctx.beginPath();
+                ctx.roundRect(x, y, barWidth, h, 2);
+                ctx.fill();
+            }
+        };
+
+        draw();
+    }
+
+    stopWaveform() {
+        if (this.animFrameId) {
+            cancelAnimationFrame(this.animFrameId);
+            this.animFrameId = null;
+        }
+        if (this.audioContext) {
+            this.audioContext.close().catch(() => {});
+            this.audioContext = null;
+            this.analyser = null;
+        }
+    }
+
+    // --- Recording Controls ---
 
     togglePause() {
         if (!this.mediaRecorder || !this.isRecording) return;
@@ -147,6 +229,7 @@ class VoiceRecorderManager {
         }
 
         this.stopTimer();
+        this.stopWaveform();
         this.isRecording = false;
         this.isPaused = false;
         this.voiceBtn.classList.remove('recording', 'paused');
@@ -221,6 +304,7 @@ class VoiceRecorderManager {
 
     hideRecordingUI() {
         if (this.voiceOverlay) this.voiceOverlay.classList.remove('show');
+        this.stopWaveform();
         this.recordedBlob = null;
         this.audioChunks = [];
         this.isRecording = false;

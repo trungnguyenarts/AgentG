@@ -269,32 +269,32 @@ async function captureSnapshot(cdp) {
             // Add Snapshot Reset Styles directly to the clone
             const styleTag = document.createElement('style');
             styleTag.textContent = \`
-                #agentg-chat-content { 
-                    width: 100% !important; 
-                    max-width: 100% !important; 
-                    word-wrap: break-word !important; 
-                    overflow-wrap: break-word !important; 
-                    display: flex !important; 
-                    flex-direction: column !important; 
+                #agentg-chat-content {
+                    width: 100% !important;
+                    max-width: 100% !important;
+                    word-wrap: break-word !important;
+                    overflow-wrap: break-word !important;
+                    display: flex !important;
+                    flex-direction: column !important;
                     gap: 12px !important;
                     padding: 12px !important;
                     box-sizing: border-box !important;
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-                } 
-                #agentg-chat-content *, #agentg-chat-content *::before, #agentg-chat-content *::after { 
+                }
+                #agentg-chat-content *, #agentg-chat-content *::before, #agentg-chat-content *::after {
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
                 }
-                #agentg-chat-content img { 
-                    max-width: 100% !important; 
-                    height: auto !important; 
-                    object-fit: contain !important; 
-                    border-radius: 8px !important; 
-                    margin: 8px 0 !important; 
+                #agentg-chat-content img {
+                    max-width: 100% !important;
+                    height: auto !important;
+                    object-fit: contain !important;
+                    border-radius: 8px !important;
+                    margin: 8px 0 !important;
                     display: block !important;
-                } 
-                #agentg-chat-content * { 
-                    max-width: 100% !important; 
-                    box-sizing: border-box !important; 
+                }
+                #agentg-chat-content * {
+                    max-width: 100% !important;
+                    box-sizing: border-box !important;
                 }
                 /* Hide vertical scrollbar placeholders */
                 #agentg-chat-content::-webkit-scrollbar { display: none !important; }
@@ -729,24 +729,34 @@ async function checkPendingAction(cdp) {
     const CHECK_SCRIPT = `(() => {
     const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
 
-    // STRICT detection: Find the approval prompt container
-    // Antigravity shows "Run command?" or "Run tool?" text near Reject/Run buttons
-    // The buttons are inside a flex container: <div class="ml-auto flex items-center gap-1">
+    // STRICT detection: Find "Run command?" or "Run tool?" as a LEAF text node
+    // Must be a small element whose OWN text (not children) contains the exact phrase
+    const keywords = ['Run command?', 'Run tool?'];
+    let promptEl = null;
 
-    // Step 1: Find the prompt text element
-    const promptEl = [...scope.querySelectorAll('*')].find(el => {
-        const t = el.textContent || '';
-        return (t.includes('Run command?') || t.includes('Run tool?') || t.includes('Action requires approval'))
-            && el.offsetParent !== null
-            && el.children.length < 10; // Avoid matching huge parent containers
-    });
+    // Use TreeWalker for precise text node search
+    const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+    let textNode;
+    while (textNode = walker.nextNode()) {
+        const t = textNode.textContent || '';
+        if (keywords.some(k => t.includes(k))) {
+            const parent = textNode.parentElement;
+            if (parent && parent.offsetParent !== null) {
+                // Verify it's a small, specific element (not a huge container)
+                const fullText = parent.textContent || '';
+                if (fullText.length < 200) {
+                    promptEl = parent;
+                    break;
+                }
+            }
+        }
+    }
 
     if (!promptEl) {
         return { hasPendingAction: false };
     }
 
-    // Step 2: Find the approval container (ancestor with Reject + Run buttons nearby)
-    // Walk up from promptEl to find a container that also holds the action buttons
+    // Step 2: Walk up to find Reject + Run buttons in same container
     let container = promptEl;
     let runBtn = null;
     let rejectBtn = null;
@@ -770,7 +780,11 @@ async function checkPendingAction(cdp) {
         if (runBtn || rejectBtn) break;
     }
 
-    // Must have at least the prompt text to be considered a real pending action
+    // MUST have at least one action button to confirm it's a real approval prompt
+    if (!runBtn && !rejectBtn) {
+        return { hasPendingAction: false };
+    }
+
     let commandText = '';
     const codeBlock = scope.querySelector('pre code, .code-block');
     if (codeBlock) {
@@ -1067,16 +1081,20 @@ async function checkToolPermission(cdp) {
     const CHECK_SCRIPT = `(() => {
     const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
 
-    // Find "Allow ... ?" or "Allow directory access" text
+    // Find "Allow ... access ... ?" text (flexible matching)
     const allEls = [...scope.querySelectorAll('p, span, div')];
     const promptEl = allEls.find(el => {
         const text = (el.textContent || '').trim();
-        return (text.includes('Allow') && text.includes('access to') && text.includes('?'))
+        return (text.includes('Allow') && text.includes('access') && text.includes('?'))
             && el.offsetParent !== null
             && el.children.length < 5;
     });
 
     if (!promptEl) return { hasToolPermission: false };
+
+    function btnIncludes(btn, keyword) {
+        return (btn.textContent || '').trim().toLowerCase().replace(/\\s+/g, ' ').includes(keyword);
+    }
 
     // Walk up to find button container with Deny / Allow Once / Allow This Conversation
     let container = promptEl;
@@ -1084,17 +1102,25 @@ async function checkToolPermission(cdp) {
     let allowOnceBtn = null;
     let allowConvBtn = null;
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 10; i++) {
         container = container.parentElement;
         if (!container) break;
 
         const btns = [...container.querySelectorAll('button')].filter(b => b.offsetParent !== null);
 
-        denyBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'deny');
-        allowOnceBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow once');
-        allowConvBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow this conversation');
+        denyBtn = btns.find(b => btnIncludes(b, 'deny'));
+        allowOnceBtn = btns.find(b => btnIncludes(b, 'allow once'));
+        allowConvBtn = btns.find(b => btnIncludes(b, 'allow this conversation'));
 
         if (denyBtn || allowOnceBtn || allowConvBtn) break;
+    }
+
+    // Fallback: search ALL visible buttons on page
+    if (!denyBtn && !allowOnceBtn && !allowConvBtn) {
+        const allBtns = [...document.querySelectorAll('button')].filter(b => b.offsetParent !== null);
+        denyBtn = allBtns.find(b => btnIncludes(b, 'deny'));
+        allowOnceBtn = allBtns.find(b => btnIncludes(b, 'allow once'));
+        allowConvBtn = allBtns.find(b => btnIncludes(b, 'allow this conversation'));
     }
 
     if (!denyBtn && !allowOnceBtn && !allowConvBtn) return { hasToolPermission: false };
@@ -1131,67 +1157,72 @@ async function clickToolPermission(cdp, action) {
     // action: 'allow_once', 'allow_conversation', 'deny'
     const CLICK_SCRIPT = `(async () => {
     const actionType = "${action}";
-    const scope = document.getElementById('conversation') || document.getElementById('cascade') || document.body;
 
-    // Find the permission prompt first
-    const allEls = [...scope.querySelectorAll('p, span, div')];
-    const promptEl = allEls.find(el => {
-        const text = (el.textContent || '').trim();
-        return (text.includes('Allow') && text.includes('access to') && text.includes('?'))
-            && el.offsetParent !== null
-            && el.children.length < 5;
+    function doClick(el) {
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const opts = { bubbles: true, cancelable: true, view: window,
+                       clientX: cx, clientY: cy, screenX: cx, screenY: cy };
+        el.dispatchEvent(new PointerEvent('pointerdown', opts));
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+        el.dispatchEvent(new PointerEvent('pointerup', opts));
+        el.dispatchEvent(new MouseEvent('mouseup', opts));
+        el.dispatchEvent(new MouseEvent('click', opts));
+    }
+
+    function btnText(btn) {
+        return (btn.textContent || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+    }
+
+    // Keywords for each action
+    const keywords = {
+        'allow_once': 'allow once',
+        'allow_conversation': 'allow this conversation',
+        'deny': 'deny'
+    };
+    const keyword = keywords[actionType] || actionType;
+
+    // Collect ALL buttons from everywhere - document, shadow DOMs, iframes
+    let allBtns = [...document.querySelectorAll('button')].filter(b => {
+        try { return b.offsetParent !== null || b.getBoundingClientRect().height > 0; } catch(e) { return false; }
     });
 
-    let targetBtn = null;
-
-    if (promptEl) {
-        // Walk up to find buttons
-        let container = promptEl;
-        for (let i = 0; i < 8; i++) {
-            container = container.parentElement;
-            if (!container) break;
-
-            const btns = [...container.querySelectorAll('button')].filter(b => b.offsetParent !== null);
-
-            if (actionType === 'allow_once') {
-                targetBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow once');
-            } else if (actionType === 'allow_conversation') {
-                targetBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow this conversation');
-            } else {
-                targetBtn = btns.find(b => (b.textContent || '').trim().toLowerCase() === 'deny');
-            }
-
-            if (targetBtn) break;
+    // Also check shadow DOMs
+    document.querySelectorAll('*').forEach(el => {
+        if (el.shadowRoot) {
+            const shadowBtns = [...el.shadowRoot.querySelectorAll('button')].filter(b => {
+                try { return b.getBoundingClientRect().height > 0; } catch(e) { return false; }
+            });
+            allBtns = allBtns.concat(shadowBtns);
         }
-    }
+    });
 
-    // Fallback: search all buttons on page
+    let targetBtn = allBtns.find(b => btnText(b) === keyword);
+
+    // Fallback: includes match
     if (!targetBtn) {
-        const allBtns = [...scope.querySelectorAll('button')].filter(b => b.offsetParent !== null);
-        if (actionType === 'allow_once') {
-            targetBtn = allBtns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow once');
-        } else if (actionType === 'allow_conversation') {
-            targetBtn = allBtns.find(b => (b.textContent || '').trim().toLowerCase() === 'allow this conversation');
-        } else {
-            targetBtn = allBtns.find(b => (b.textContent || '').trim().toLowerCase() === 'deny');
-        }
+        targetBtn = allBtns.find(b => btnText(b).includes(keyword));
     }
 
     if (!targetBtn) {
-        return { ok: false, reason: 'button_not_found', action: actionType };
+        const debugBtns = allBtns.map(b => b.textContent?.trim().slice(0, 60));
+        return { ok: false, reason: 'button_not_found', action: actionType, debugBtns: debugBtns.slice(0, 30), ctxInfo: document.title || location.href };
     }
 
-    targetBtn.click();
+    doClick(targetBtn);
 
     return {
         ok: true,
-        method: 'button_click',
+        method: 'full_event_dispatch',
         action: actionType,
-        buttonText: targetBtn.textContent?.slice(0, 50)
+        buttonText: targetBtn.textContent?.trim().slice(0, 50)
     };
 })()`;
 
+    // Try all contexts - only return on success, keep trying on failure
     const contexts = cdp.getContexts();
+    let lastFail = null;
     for (const ctx of contexts) {
         try {
             const result = await cdp.call("Runtime.evaluate", {
@@ -1202,12 +1233,20 @@ async function clickToolPermission(cdp, action) {
             });
 
             if (result.result && result.result.value) {
-                return result.result.value;
+                if (result.result.value.ok) {
+                    return result.result.value;
+                }
+                // Collect debug from all contexts
+                if (!lastFail) {
+                    lastFail = result.result.value;
+                } else if (result.result.value.debugBtns && result.result.value.debugBtns.length > (lastFail.debugBtns?.length || 0)) {
+                    lastFail = result.result.value;
+                }
             }
         } catch (e) { }
     }
 
-    return { ok: false, reason: "no_context" };
+    return lastFail || { ok: false, reason: "no_context" };
 }
 
 // Click Confirm or Deny button in step confirmation

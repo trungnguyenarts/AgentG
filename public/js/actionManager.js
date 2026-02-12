@@ -313,7 +313,8 @@ class ActionManager {
                 }, 500);
             } else {
                 console.error(`Tool permission ${action} failed:`, result);
-                alert(`Failed: ${result.reason || 'Unknown error'}`);
+                const debugInfo = result.debugBtns ? `\nButtons found: ${result.debugBtns.join(', ')}` : '';
+                alert(`Failed: ${result.reason || 'Unknown error'}${debugInfo}`);
             }
         } catch (error) {
             console.error(`Error during tool permission ${action}:`, error);

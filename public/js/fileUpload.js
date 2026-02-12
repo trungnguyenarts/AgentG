@@ -1,5 +1,5 @@
 // File Upload Manager
-// Handles file selection, preview, and uploading
+// Handles file selection, preview, uploading with progress
 
 class FileUploadManager {
     constructor() {
@@ -61,16 +61,17 @@ class FileUploadManager {
     createFileChip(file, index) {
         const chip = document.createElement('div');
         chip.className = 'file-chip';
+        chip.dataset.index = index;
 
         // Create thumbnail for images
-        if (file.type.startsWith('image/')) {
+        if (file.type && file.type.startsWith('image/') && !file.isPreUploaded) {
             const img = document.createElement('img');
             img.src = URL.createObjectURL(file);
             chip.appendChild(img);
         } else {
             // File icon for non-images
             const icon = document.createElement('div');
-            icon.textContent = this.getFileIcon(file.type);
+            icon.textContent = this.getFileIcon(file.type || '');
             icon.style.cssText = 'font-size: 24px; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;';
             chip.appendChild(icon);
         }
@@ -81,10 +82,18 @@ class FileUploadManager {
         name.textContent = file.name;
         chip.appendChild(name);
 
+        // Progress bar (hidden by default)
+        const progressWrap = document.createElement('div');
+        progressWrap.className = 'file-progress-wrap hidden';
+        const progressBar = document.createElement('div');
+        progressBar.className = 'file-progress-bar';
+        progressWrap.appendChild(progressBar);
+        chip.appendChild(progressWrap);
+
         // Remove button
         const removeBtn = document.createElement('button');
         removeBtn.className = 'file-chip-remove';
-        removeBtn.textContent = '×';
+        removeBtn.textContent = '\u00d7';
         removeBtn.setAttribute('aria-label', 'Remove file');
         removeBtn.addEventListener('click', () => {
             this.removeFile(index);
@@ -92,6 +101,11 @@ class FileUploadManager {
         chip.appendChild(removeBtn);
 
         return chip;
+    }
+
+    removeFile(index) {
+        this.selectedFiles.splice(index, 1);
+        this.updatePreview();
     }
 
     getFileIcon(mimeType) {
@@ -114,12 +128,61 @@ class FileUploadManager {
         this.updatePreview();
     }
 
+    // Upload a single file with XHR for progress tracking
+    uploadSingleFile(file, index) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            const formData = new FormData();
+            formData.append('file', file);
+
+            // Find the chip's progress elements
+            const chip = this.filePreviewArea.querySelector(`[data-index="${index}"]`);
+            const progressWrap = chip ? chip.querySelector('.file-progress-wrap') : null;
+            const progressBar = chip ? chip.querySelector('.file-progress-bar') : null;
+
+            // Show progress bar
+            if (progressWrap) progressWrap.classList.remove('hidden');
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable && progressBar) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    progressBar.style.width = pct + '%';
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    // Mark complete
+                    if (progressBar) progressBar.style.width = '100%';
+                    if (chip) chip.classList.add('file-chip-done');
+                    try {
+                        resolve(JSON.parse(xhr.responseText));
+                    } catch (e) {
+                        resolve({ success: true });
+                    }
+                } else {
+                    reject(new Error(`Upload failed: ${xhr.statusText}`));
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                if (chip) chip.classList.add('file-chip-error');
+                reject(new Error('Upload failed'));
+            });
+
+            xhr.open('POST', '/upload');
+            xhr.send(formData);
+        });
+    }
+
     async uploadFiles() {
         if (this.selectedFiles.length === 0) return [];
 
         const uploadedFiles = [];
 
-        for (const file of this.selectedFiles) {
+        for (let i = 0; i < this.selectedFiles.length; i++) {
+            const file = this.selectedFiles[i];
+
             // Skip already uploaded files (like voice recordings)
             if (file.isPreUploaded) {
                 uploadedFiles.push(file.serverResult);
@@ -127,20 +190,7 @@ class FileUploadManager {
             }
 
             try {
-                const formData = new FormData();
-                formData.append('file', file);
-                // ... continues
-
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!response.ok) {
-                    throw new Error(`Upload failed: ${response.statusText}`);
-                }
-
-                const result = await response.json();
+                const result = await this.uploadSingleFile(file, i);
                 uploadedFiles.push(result);
             } catch (error) {
                 console.error(`Failed to upload ${file.name}:`, error);

@@ -83,7 +83,7 @@ class SnapshotManager {
           ${data.css}
           
           /* Aggressive font and background override */
-          #agentg-chat-content, 
+          #agentg-chat-content,
           #agentg-chat-content *,
           #agentg-chat-content [style*="font-family"] {
             font-family: var(--font-sans) !important;

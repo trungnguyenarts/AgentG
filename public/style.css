@@ -551,6 +551,35 @@ body {
   transform: scale(0.9);
 }
 
+/* File Upload Progress */
+.file-progress-wrap {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--border-default);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  overflow: hidden;
+}
+
+.file-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent-primary);
+  transition: width 0.15s ease;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.file-chip-done .file-progress-bar {
+  background: var(--success);
+}
+
+.file-chip-error .file-progress-bar {
+  background: var(--error);
+  width: 100%;
+}
+
 /* ============================================
    Voice Recording UI
    ============================================ */
@@ -583,21 +612,22 @@ body {
 }
 
 .voice-waveform {
-  width: 100px;
+  width: 220px;
   height: 100px;
-  border-radius: var(--radius-full);
-  background: var(--error);
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
-  font-size: 48px;
-  animation: pulse 1.5s ease-in-out infinite;
+  overflow: hidden;
+}
+
+.voice-waveform canvas {
+  display: block;
 }
 
 .voice-waveform.paused {
-  background: var(--warning);
-  animation-play-state: paused;
+  opacity: 0.5;
 }
 
 .voice-timer {

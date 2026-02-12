@@ -78,7 +78,9 @@
     <!-- Voice Recording Overlay -->
     <div class="voice-recording-overlay" id="voiceOverlay">
         <div class="voice-recording-card">
-            <div class="voice-waveform">🎙️</div>
+            <div class="voice-waveform">
+                <canvas id="waveformCanvas" width="220" height="100"></canvas>
+            </div>
             <div class="voice-timer" id="voiceTimer">0:00</div>
             <p style="color: var(--text-secondary); font-size: 14px;">Recording audio...</p>
             <div class="voice-actions">
@@ -153,7 +155,7 @@
                 <button class="action-btn reject-btn" id="toolDenyBtn" style="width: auto; padding: 8px 16px;">
                     Deny
                 </button>
-                <button class="action-btn" id="toolAllowOnceBtn" style="width: auto; padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 8px; cursor: pointer;">
+                <button class="action-btn" id="toolAllowOnceBtn" style="width: auto; padding: 8px 16px; background: #f59e0b; color: #000; font-weight: 600; border: none; border-radius: 8px; cursor: pointer;">
                     Allow Once
                 </button>
                 <button class="action-btn accept-btn" id="toolAllowConvBtn" style="width: auto; padding: 8px 16px;">
